@@ -22,9 +22,9 @@
 
 ## Features
 
-[X] TCPConnection
-[X] TCPBinding
-[X] AssociateUDP
+* [X] TCPConnection
+* [X] TCPBinding
+* [X] AssociateUDP
 
 ## Usage
 
