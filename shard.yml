@@ -1,0 +1,13 @@
+name: socks
+version: 0.1.0
+
+dependencies:
+  wrench:
+    github: 73686f77/wrench.cr
+  durian:
+    github: 636f7374/durian.cr
+
+authors:
+  - 636f7374
+
+license: BSDv3
