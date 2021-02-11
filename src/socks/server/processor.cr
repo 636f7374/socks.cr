@@ -63,7 +63,7 @@ class SOCKS::Server
 
       transport = Transport.new session, outbound, heartbeat: heartbeat_proc
       transport.reliable = reliable
-      set_alive_interval transport, outbound
+      set_alive_interval transport
       transport.perform
 
       loop do
@@ -81,60 +81,107 @@ class SOCKS::Server
       end
     end
 
-    private def set_alive_interval(transport : Transport, outbound : IO)
-      return udp_alive_interval.try { |_udp_alive_interval| transport.alive_interval = _udp_alive_interval } if outbound.is_a? UDPSocket
+    private def set_alive_interval(transport : Transport)
+      if transport.destination.is_a? UDPSocket
+        udp_alive_interval.try { |_udp_alive_interval| transport.alive_interval = _udp_alive_interval }
+
+        return
+      end
+
       alive_interval.try { |_alive_interval| transport.alive_interval = _alive_interval }
     end
 
     private def check_inbound_keep_alive(transport : Transport) : Bool
       _session_inbound = session.inbound
       return false unless _session_inbound.is_a? Enhanced::WebSocket
-      return false unless need_disconnect_peer = _session_inbound.need_disconnect_peer?
 
-      if _session_inbound.keep_alive?
-        transport.cleanup_side Transport::Side::Destination, free_tls: true
-        self.keep_alive = true
+      loop do
+        next sleep 0.25_f32.seconds unless transport.reliable_status.call
+        transport.destination.close rescue nil
 
-        _session_inbound.need_disconnect_peer = nil
-        _session_inbound.keep_alive = nil
+        loop do
+          next sleep 0.25_f32.seconds unless transport.finished?
 
-        true
-      else
-        transport.cleanup_all
-        self.keep_alive = false
+          unless _session_inbound.keep_alive?
+            transport.cleanup_all
 
-        _session_inbound.need_disconnect_peer = nil
-        _session_inbound.keep_alive = nil
+            self.keep_alive = false
+            _session_inbound.keep_alive = nil
 
-        true
+            return true
+          end
+
+          begin
+            _session_inbound.ping Enhanced::WebSocket::EnhancedPing::KeepAlive
+            event = _session_inbound.receive_pong_event!
+            raise Exception.new String.build { |io| io << "Received from IO to failure status (" << event.to_s << ")." } unless event.confirmed?
+          rescue ex
+            transport.cleanup_all
+
+            self.keep_alive = false
+            _session_inbound.keep_alive = nil
+
+            return true
+          end
+
+          transport.cleanup_side Transport::Side::Destination, free_tls: true
+
+          self.keep_alive = true
+          _session_inbound.keep_alive = nil
+
+          return true
+        end
       end
     end
 
     private def check_holding_keep_alive(transport : Transport) : Bool
       _session_holding = session.holding
       return false unless _session_holding.is_a? Enhanced::WebSocket
-      _session_holding.process_enhanced_ping! rescue nil
 
-      if _session_holding.keep_alive?
+      loop do
+        _session_holding.process_enhanced_ping! rescue nil
+        break if transport.reliable_status.call
+
+        sleep 0.25_f32.seconds
+      end
+
+      transport.destination.close rescue nil
+
+      loop do
+        next sleep 0.25_f32.seconds unless transport.finished?
+
+        unless _session_holding.keep_alive?
+          transport.cleanup_all
+
+          self.keep_alive = false
+          _session_holding.keep_alive = nil
+
+          return true
+        end
+
+        begin
+          _session_holding.ping Enhanced::WebSocket::EnhancedPing::KeepAlive
+          event = _session_holding.receive_pong_event!
+          raise Exception.new String.build { |io| io << "Received from IO to failure status (" << event.to_s << ")." } unless event.confirmed?
+        rescue ex
+          transport.cleanup_all
+
+          self.keep_alive = false
+          _session_holding.keep_alive = nil
+
+          return true
+        end
+
         transport.cleanup_side Transport::Side::Destination, free_tls: true
-        self.keep_alive = true
 
         session.inbound.close rescue nil
         session.inbound = _session_holding
         session.holding = nil
 
-        _session_holding.need_disconnect_peer = nil
+        self.keep_alive = true
         _session_holding.keep_alive = nil
 
-        true
-      else
-        transport.cleanup_all
-        self.keep_alive = false
-
-        _session_holding.need_disconnect_peer = nil
-        _session_holding.keep_alive = nil
-
-        true
+        return true
       end
     end
 

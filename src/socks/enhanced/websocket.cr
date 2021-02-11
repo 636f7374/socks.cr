@@ -64,14 +64,6 @@ module SOCKS::Enhanced
       @mutex.synchronize { @keepAlive }
     end
 
-    def need_disconnect_peer=(value : Bool?)
-      @mutex.synchronize { @needDisconnectPeer = value }
-    end
-
-    def need_disconnect_peer?
-      @mutex.synchronize { @needDisconnectPeer }
-    end
-
     private def update_buffer
       receive_buffer = uninitialized UInt8[4096_i32]
 
@@ -116,12 +108,10 @@ module SOCKS::Enhanced
           pong EnhancedPong::Confirmed
 
           self.keep_alive = true
-          self.need_disconnect_peer = true
         else
           pong EnhancedPong::Refused
 
           self.keep_alive = false
-          self.need_disconnect_peer = true
         end
       end
     end

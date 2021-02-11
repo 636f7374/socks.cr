@@ -387,7 +387,7 @@ class SOCKS::Server
     true
   end
 
-  def accept? : ::IO?
+  def accept? : Session?
     return unless socket = server.accept?
 
     client_timeout.try do |_timeout|
