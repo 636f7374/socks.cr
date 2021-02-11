@@ -23,6 +23,14 @@ class SOCKS::Server
       @udpAliveInterval ||= 5_i32.seconds
     end
 
+    def heartbeat_interval=(value : Time::Span)
+      @heartbeatInterval = value
+    end
+
+    def heartbeat_interval
+      @heartbeatInterval ||= 3_i32.seconds
+    end
+
     def keep_alive=(value : Bool?)
       @keepAlive = value
     end
@@ -63,7 +71,7 @@ class SOCKS::Server
 
       transport = Transport.new session, outbound, heartbeat: heartbeat_proc
       transport.reliable = reliable
-      set_alive_interval transport
+      set_transport_options transport
       transport.perform
 
       loop do
@@ -81,7 +89,7 @@ class SOCKS::Server
       end
     end
 
-    private def set_alive_interval(transport : Transport)
+    private def set_transport_options(transport : Transport)
       if transport.destination.is_a? UDPSocket
         udp_alive_interval.try { |_udp_alive_interval| transport.alive_interval = _udp_alive_interval }
 
@@ -89,6 +97,7 @@ class SOCKS::Server
       end
 
       alive_interval.try { |_alive_interval| transport.alive_interval = _alive_interval }
+      heartbeat_interval.try { |_heartbeat_interval| transport.heartbeat_interval = _heartbeat_interval }
     end
 
     private def check_inbound_keep_alive(transport : Transport) : Bool
