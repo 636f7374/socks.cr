@@ -146,9 +146,9 @@ class SOCKS::Server
     private def check_holding_keep_alive(transport : Transport) : Bool
       _session_holding = session.holding
       return false unless _session_holding.is_a? Enhanced::WebSocket
+      _session_holding.process_enhanced_ping! rescue nil
 
       loop do
-        _session_holding.process_enhanced_ping! rescue nil
         break if transport.reliable_status.call
 
         sleep 0.25_f32.seconds

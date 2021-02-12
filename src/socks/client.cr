@@ -133,7 +133,11 @@ class SOCKS::Client < IO
 
     if _outbound.is_a? Enhanced::WebSocket
       _outbound.ping event: Enhanced::WebSocket::EnhancedPing::KeepAlive
-      return _outbound.receive_pong_event!
+      received = _outbound.receive_pong_event!
+      _outbound.receive_ping_event!
+      _outbound.pong event: Enhanced::WebSocket::EnhancedPong::Confirmed
+
+      return received
     end
 
     _holding = holding
@@ -141,8 +145,11 @@ class SOCKS::Client < IO
     if _holding.is_a? Enhanced::WebSocket
       _holding.ping event: Enhanced::WebSocket::EnhancedPing::KeepAlive
       received = _holding.receive_pong_event!
-
       outbound.close rescue nil
+
+      _holding.receive_ping_event!
+      _holding.pong event: Enhanced::WebSocket::EnhancedPong::Confirmed
+
       @outbound = _holding
       @holding = nil
 
