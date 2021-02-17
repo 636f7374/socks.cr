@@ -33,6 +33,7 @@
 ### Used as Shard
 
 Add this to your application's shard.yml:
+
 ```yaml
 dependencies:
   socks:
@@ -68,7 +69,7 @@ $ make test
 
 |Name|Creator|Maintainer|Contributor|
 |:---:|:---:|:---:|:---:|
-|**[636f7374](https://github.com/636f7374)**|√|√||
+|**[636f7374](https://github.com/636f7374)**|√|√|√|
 
 ## License
 

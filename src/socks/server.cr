@@ -1,12 +1,12 @@
 class SOCKS::Server
   getter server : Socket::Server
-  getter dnsResolver : Durian::Resolver
+  getter dnsResolver : DNS::Resolver
   getter options : Server::Options
 
-  def initialize(@server : Socket::Server, @dnsResolver : Durian::Resolver, @options : Server::Options = Server::Options.new)
+  def initialize(@server : Socket::Server, @dnsResolver : DNS::Resolver, @options : Server::Options = Server::Options.new)
   end
 
-  def self.new(host : String, port : Int32, dns_resolver : Durian::Resolver, options : Server::Options = Server::Options.new)
+  def self.new(host : String, port : Int32, dns_resolver : DNS::Resolver, options : Server::Options = Server::Options.new)
     tcp_server = TCPServer.new host: host, port: port
     new server: tcp_server, dnsResolver: dns_resolver, options: options
   end

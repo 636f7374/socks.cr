@@ -3,7 +3,7 @@ struct SOCKS::Frames
     property version : VersionFlag
     property arType : ARType
     property methodCount : UInt8?
-    property methods : Array(AuthenticationFlag)?
+    property methods : Set(AuthenticationFlag)?
     property acceptedMethod : AuthenticationFlag?
     property authenticateFrame : Authenticate?
     property successed : Bool?
@@ -71,7 +71,7 @@ struct SOCKS::Frames
       memory.write buffer.to_slice[0_i32, read_length]
       memory.rewind
 
-      methods = [] of AuthenticationFlag
+      methods = Set(AuthenticationFlag).new
       method_count.times { methods << Frames.read_authentication! io: memory }
       frame.methods = methods
 

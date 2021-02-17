@@ -4,12 +4,10 @@ require "../src/socks.cr"
 # Durian will send and receive DNS requests in parallel.
 # Especially if you enable `IpCache`, it will speed up DNS queries.
 
-dns_servers = [] of Durian::Resolver::Server
-dns_servers << Durian::Resolver::Server.new ipAddress: Socket::IPAddress.new("8.8.8.8", 53_i32), protocol: Durian::Protocol::UDP
-dns_servers << Durian::Resolver::Server.new ipAddress: Socket::IPAddress.new("8.8.4.4", 53_i32), protocol: Durian::Protocol::UDP
-
-dns_resolver = Durian::Resolver.new dns_servers
-dns_resolver.ip_cache = Durian::Cache::IPAddress.new
+dns_servers = Set(DNS::Resolver::Address).new
+dns_servers << DNS::Resolver::Address.new ipAddress: Socket::IPAddress.new("8.8.8.8", 853_i32), protocolType: DNS::ProtocolType::TLS
+dns_servers << DNS::Resolver::Address.new ipAddress: Socket::IPAddress.new("8.8.4.4", 53_i32), protocolType: DNS::ProtocolType::UDP
+dns_resolver = DNS::Resolver.new dns_servers
 
 # `SOCKS::Client.new` will create a socket connected to the destination address.
 # Then you can add Authentication Methods, such as `UserNamePassword`.
@@ -66,9 +64,9 @@ begin
   client.establish! command_type: SOCKS::Frames::CommandFlag::AssociateUDP, host: "8.8.8.8", port: 53_i32, remote_dns_resolution: true
 
   # Send Durian::Packet Query (AssociateUDP).
-  dns_request = Durian::Packet.new Durian::Protocol::UDP, Durian::Packet::QRFlag::Query
-  dns_request.add_query "www.example.com", Durian::RecordFlag::A
-  client.write dns_request.to_slice
+  dns_ask = DNS::Packet.create_getaddrinfo_ask protocol_type: DNS::ProtocolType::UDP, name: "www.example.com", record_type: DNS::Packet::RecordFlag::A
+  dns_ask.transmissionId = Random.new.rand UInt16
+  client.write dns_ask.to_slice
 
   # Create a buffer for receiving subsequent UDP packets.
   buffer = uninitialized UInt8[4096_i32]
@@ -78,19 +76,19 @@ begin
   memory = IO::Memory.new buffer.to_slice[0_i32, read_length]
 
   # Parsing Durian::Packet Response (AssociateUDP).
-  STDOUT.puts [:associateUDPFirst, Time.local, (Durian::Packet.from_io! protocol: Durian::Protocol::UDP, io: memory)]
+  STDOUT.puts [:associateUDPFirst, Time.local, (DNS::Packet.from_io protocol_type: DNS::ProtocolType::UDP, io: memory)]
 
   # Send Durian::Packet Query (AssociateUDP).
-  dns_request = Durian::Packet.new Durian::Protocol::UDP, Durian::Packet::QRFlag::Query
-  dns_request.add_query "www.google.com", Durian::RecordFlag::A
-  client.write dns_request.to_slice
+  dns_ask = DNS::Packet.create_getaddrinfo_ask protocol_type: DNS::ProtocolType::UDP, name: "www.google.com", record_type: DNS::Packet::RecordFlag::A
+  dns_ask.transmissionId = Random.new.rand UInt16
+  client.write dns_ask.to_slice
 
   # Receive 4096 Bytes, because Fragment and DNS query may be larger than 512 Bytes. (AssociateUDP).
   read_length = client.read buffer.to_slice
   memory = IO::Memory.new buffer.to_slice[0_i32, read_length]
 
   # Parsing Durian::Packet Response (AssociateUDP).
-  STDOUT.puts [:associateUDPLast, Time.local, (Durian::Packet.from_io! protocol: Durian::Protocol::UDP, io: memory)]
+  STDOUT.puts [:associateUDPLast, Time.local, (DNS::Packet.from_io protocol_type: DNS::ProtocolType::UDP, io: memory)]
 rescue ex
   STDOUT.puts [ex]
 end

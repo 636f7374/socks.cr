@@ -8,19 +8,19 @@ module SOCKS
     Socket::IPAddress.new host, port rescue nil
   end
 
-  def self.create_outbound_socket(command_type : Frames::CommandFlag, destination_address : Socket::IPAddress | Address, dns_resolver : Durian::Resolver, tcp_timeout : TimeOut = TimeOut.new, udp_timeout : TimeOut = TimeOut.udp_default) : ::IPSocket
+  def self.create_outbound_socket(command_type : Frames::CommandFlag, destination_address : Socket::IPAddress | Address, dns_resolver : DNS::Resolver, tcp_timeout : TimeOut = TimeOut.new, udp_timeout : TimeOut = TimeOut.udp_default) : ::IPSocket
     case destination_address
     in Socket::IPAddress
       case destination_address.family
       when .inet6?
-        SOCKS.create_outbound_socket command_type: command_type, destination_address: destination_address, tcp_timeout: tcp_timeout, udp_timeout: udp_timeout
+        create_outbound_socket command_type: command_type, destination_address: destination_address, tcp_timeout: tcp_timeout, udp_timeout: udp_timeout
       when .inet?
-        SOCKS.create_outbound_socket command_type: command_type, destination_address: destination_address, tcp_timeout: tcp_timeout, udp_timeout: udp_timeout
+        create_outbound_socket command_type: command_type, destination_address: destination_address, tcp_timeout: tcp_timeout, udp_timeout: udp_timeout
       else
         raise Exception.new "SOCKS.create_outbound_socket: Unsupported Socket::IPAddress family, Server.create_outbound_socket failed!"
       end
     in Address
-      SOCKS.create_outbound_socket command_type: command_type, destination_address: destination_address, dns_resolver: dns_resolver, tcp_timeout: tcp_timeout, udp_timeout: udp_timeout
+      create_outbound_socket command_type: command_type, destination_address: destination_address, dns_resolver: dns_resolver, tcp_timeout: tcp_timeout, udp_timeout: udp_timeout
     end
   end
 
@@ -51,18 +51,27 @@ module SOCKS
     socket
   end
 
-  def self.create_outbound_socket(command_type : Frames::CommandFlag, destination_address : Address, dns_resolver : Durian::Resolver, tcp_timeout : TimeOut = TimeOut.new, udp_timeout : TimeOut = TimeOut.udp_default) : ::IPSocket
+  def self.create_outbound_socket(command_type : Frames::CommandFlag, destination_address : Address, dns_resolver : DNS::Resolver, tcp_timeout : TimeOut = TimeOut.new, udp_timeout : TimeOut = TimeOut.udp_default) : ::IPSocket
     case command_type
     in .tcp_connection?
-      socket = Durian::TCPSocket.connect host: destination_address.host, port: destination_address.port, resolver: dns_resolver, connect_timeout: tcp_timeout.connect
+      socket = TCPSocket.new host: destination_address.host, port: destination_address.port, dns_resolver: dns_resolver, connect_timeout: tcp_timeout.connect
       socket.read_timeout = tcp_timeout.read
       socket.write_timeout = tcp_timeout.write
     in .tcp_binding?
-      socket = Durian::TCPSocket.connect host: destination_address.host, port: destination_address.port, resolver: dns_resolver, connect_timeout: tcp_timeout.connect
+      socket = TCPSocket.new host: destination_address.host, port: destination_address.port, dns_resolver: dns_resolver, connect_timeout: tcp_timeout.connect
       socket.read_timeout = tcp_timeout.read
       socket.write_timeout = tcp_timeout.write
     in .associate_udp?
-      socket = Durian::Resolver.get_udp_socket! host: destination_address.host, port: destination_address.port, resolver: dns_resolver, connect_timeout: udp_timeout.connect
+      socket = UDPSocket.new
+
+      begin
+        socket.connect host: destination_address.host, port: destination_address.port, dns_resolver: dns_resolver, connect_timeout: udp_timeout.connect
+      rescue ex
+        socket.close rescue nil
+
+        raise ex
+      end
+
       socket.read_timeout = udp_timeout.read
       socket.write_timeout = udp_timeout.write
     end

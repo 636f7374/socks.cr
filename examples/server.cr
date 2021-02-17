@@ -4,12 +4,10 @@ require "../src/socks.cr"
 # Durian will send and receive DNS requests in parallel.
 # Especially if you enable `IpCache`, it will speed up DNS queries.
 
-dns_servers = [] of Durian::Resolver::Server
-dns_servers << Durian::Resolver::Server.new ipAddress: Socket::IPAddress.new("8.8.8.8", 53_i32), protocol: Durian::Protocol::UDP
-dns_servers << Durian::Resolver::Server.new ipAddress: Socket::IPAddress.new("8.8.4.4", 53_i32), protocol: Durian::Protocol::UDP
-
-dns_resolver = Durian::Resolver.new dns_servers
-dns_resolver.ip_cache = Durian::Cache::IPAddress.new
+dns_servers = Set(DNS::Resolver::Address).new
+dns_servers << DNS::Resolver::Address.new ipAddress: Socket::IPAddress.new("8.8.8.8", 853_i32), protocolType: DNS::ProtocolType::TLS
+dns_servers << DNS::Resolver::Address.new ipAddress: Socket::IPAddress.new("8.8.4.4", 53_i32), protocolType: DNS::ProtocolType::UDP
+dns_resolver = DNS::Resolver.new dns_servers
 
 # `Transport::Reliable` to ensure connection stability, usually `Transport::Reliable::Half`.
 # `SOCKS::Server::Options`, adjust the server policy, such as whether to allow WebSocketKeepAlive.
@@ -27,7 +25,7 @@ server.establish_tcp_bind_timeout = SOCKS::TimeOut.new
 server.establish_udp_bind_timeout = SOCKS::TimeOut.udp_default
 server.client_timeout = SOCKS::TimeOut.new
 
-# You can set `SOCKS::Server.authentication`, such as (`UserNamePassword` + on_auth).
+# You can set `SOCKS::Server.authentication`, such as (`UserNamePassword` and SOCKS::Server.on_auth).
 
 server.authentication = SOCKS::Frames::AuthenticationFlag::UserNamePassword
 server.on_auth = ->(user_name : String?, password : String?) do

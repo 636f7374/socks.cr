@@ -1,12 +1,12 @@
 class SOCKS::Session < IO
   property inbound : IO
   getter options : Server::Options
-  property exchangeFrames : Array(Frames)
+  property exchangeFrames : Set(Frames)
   property outbound : IO?
   property holding : IO?
 
   def initialize(@inbound : IO, @options : Server::Options)
-    @exchangeFrames = [] of Frames
+    @exchangeFrames = Set(Frames).new
   end
 
   def read_timeout=(value : Int | Time::Span | Nil)

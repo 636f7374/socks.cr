@@ -1,3 +1,5 @@
+require "http/web_socket"
+
 module SOCKS::Enhanced
   class WebSocket < IO
     alias Opcode = HTTP::WebSocket::Protocol::Opcode

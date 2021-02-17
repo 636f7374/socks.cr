@@ -1,15 +1,15 @@
 class SOCKS::Client < IO
   property outbound : IO
   property holding : IO?
-  getter dnsResolver : Durian::Resolver
-  property exchangeFrames : Array(Frames)
+  getter dnsResolver : DNS::Resolver
+  property exchangeFrames : Set(Frames)
 
-  def initialize(@outbound : IO, @dnsResolver : Durian::Resolver)
-    @exchangeFrames = [] of Frames
+  def initialize(@outbound : IO, @dnsResolver : DNS::Resolver)
+    @exchangeFrames = Set(Frames).new
   end
 
-  def self.new(host : String, port : Int32, dns_resolver : Durian::Resolver, timeout : TimeOut = TimeOut.new)
-    socket = Durian::TCPSocket.connect host, port, dns_resolver, timeout.connect
+  def self.new(host : String, port : Int32, dns_resolver : DNS::Resolver, timeout : TimeOut = TimeOut.new)
+    socket = TCPSocket.new host: host, port: port, dns_resolver: dns_resolver, connect_timeout: timeout.connect
 
     socket.read_timeout = timeout.read
     socket.write_timeout = timeout.write
@@ -17,8 +17,8 @@ class SOCKS::Client < IO
     new socket, dns_resolver
   end
 
-  def self.new(ip_address : Socket::IPAddress, dns_resolver : Durian::Resolver, timeout : TimeOut = TimeOut.new)
-    socket = TCPSocket.connect ip_address, timeout.connect, timeout.connect
+  def self.new(ip_address : Socket::IPAddress, dns_resolver : DNS::Resolver, timeout : TimeOut = TimeOut.new)
+    socket = TCPSocket.connect ip_address, connect_timeout: timeout.connect
 
     socket.read_timeout = timeout.read
     socket.write_timeout = timeout.write
@@ -47,11 +47,15 @@ class SOCKS::Client < IO
   end
 
   def authentication_methods=(value : Array(Frames::AuthenticationFlag))
+    @authenticationMethods = value.to_set
+  end
+
+  def authentication_methods=(value : Set(Frames::AuthenticationFlag))
     @authenticationMethods = value
   end
 
   def authentication_methods
-    @authenticationMethods ||= [Frames::AuthenticationFlag::NoAuthentication]
+    @authenticationMethods ||= Set{Frames::AuthenticationFlag::NoAuthentication}
   end
 
   def read_timeout=(value : Int | Time::Span | Nil)
@@ -162,12 +166,12 @@ class SOCKS::Client < IO
   def handshake! : Bool
     # Send Negotiate Ask.
 
-    uniq_authentication_methods = authentication_methods.uniq
+    uniq_authentication_methods = authentication_methods.to_a.uniq
     raise Exception.new "Client.handshake!: authenticationMethods cannot be empty!" if uniq_authentication_methods.size.zero?
 
     frame_negotiate = Frames::Negotiate.new version: version, arType: ARType::Ask
     frame_negotiate.methodCount = uniq_authentication_methods.size.to_u8
-    frame_negotiate.methods = uniq_authentication_methods
+    frame_negotiate.methods = uniq_authentication_methods.to_set
 
     if 1_i32 == uniq_authentication_methods.size
       case uniq_authentication_methods.first
@@ -252,8 +256,8 @@ class SOCKS::Client < IO
       case destination_address
       in Socket::IPAddress
       in Address
-        method, ip_address = Durian::Resolver.getaddrinfo! host: destination_address.host, port: destination_address.port, resolver: dnsResolver, try_connect: false
-        destination_address = ip_address
+        fetch_type, ip_addresses = dnsResolver.getaddrinfo host: destination_address.host, port: destination_address.port
+        destination_address = ip_addresses.first
       end
     end
 

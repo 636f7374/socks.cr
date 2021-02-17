@@ -45,6 +45,7 @@ class SOCKS::Server
 
       loop do
         break unless session.options.allowWebSocketKeepAlive
+        break unless check_support_keep_alive?
         break if session.closed?
         break unless keep_alive?
 
@@ -100,6 +101,13 @@ class SOCKS::Server
       heartbeat_interval.try { |_heartbeat_interval| transport.heartbeat_interval = _heartbeat_interval }
     end
 
+    private def check_support_keep_alive? : Bool
+      _session_inbound = session.inbound
+      _session_holding = session.holding
+
+      _session_inbound.is_a?(Enhanced::WebSocket) || _session_holding.is_a?(Enhanced::WebSocket)
+    end
+
     private def check_inbound_keep_alive(transport : Transport) : Bool
       _session_inbound = session.inbound
       return false unless _session_inbound.is_a? Enhanced::WebSocket
@@ -146,10 +154,13 @@ class SOCKS::Server
     private def check_holding_keep_alive(transport : Transport) : Bool
       _session_holding = session.holding
       return false unless _session_holding.is_a? Enhanced::WebSocket
-      _session_holding.process_enhanced_ping! rescue nil
 
       loop do
-        break if transport.reliable_status.call
+        if transport.reliable_status.call
+          _session_holding.process_enhanced_ping! rescue nil
+
+          break
+        end
 
         sleep 0.25_f32.seconds
       end
