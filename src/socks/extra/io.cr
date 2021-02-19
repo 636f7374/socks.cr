@@ -6,7 +6,7 @@ abstract class IO
     end
   end
 
-  def self.super_copy(src : IO, dst : IO, &block : ->) : Int64
+  def self.yield_copy(src : IO, dst : IO, &block : Int64, Int32 ->) : Int64
     buffer = uninitialized UInt8[4096_i32]
     count = 0_i64
 
@@ -15,7 +15,7 @@ abstract class IO
         dst.write buffer.to_slice[0_i32, len]
         count &+= len
 
-        yield
+        yield count, len
       end
     rescue ex
       raise CopyException.new message: String.new, cause: ex, count: count

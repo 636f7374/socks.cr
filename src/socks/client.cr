@@ -147,9 +147,9 @@ class SOCKS::Client < IO
     _holding = holding
 
     if _holding.is_a? Enhanced::WebSocket
+      outbound.close rescue nil
       _holding.ping event: Enhanced::WebSocket::EnhancedPing::KeepAlive
       received = _holding.receive_pong_event!
-      outbound.close rescue nil
 
       _holding.receive_ping_event!
       _holding.pong event: Enhanced::WebSocket::EnhancedPong::Confirmed

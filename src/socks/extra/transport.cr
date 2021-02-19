@@ -4,41 +4,36 @@ class Transport
     Destination = 1_u8
   end
 
-  enum Reliable : UInt8
-    Half        = 0_u8
-    Full        = 1_u8
-    Source      = 2_u8
-    Destination = 3_u8
-  end
-
-  getter source : IO
-  getter destination : IO
+  property source : IO
+  property destination : IO
   getter callback : Proc(Int64, Int64, Nil)?
   getter heartbeat : Proc(Nil)?
-  getter mutex : Mutex
-  getter workerFibers : Array(Fiber)
-  property reliable : Reliable
+  getter sentSize : Atomic(Int64)
+  getter receivedSize : Atomic(Int64)
+  property heartbeatInterval : Time::Span
+  property aliveInterval : Time::Span
+  property extraSentSize : Int32 | Int64
+  property extraReceivedSize : Int32 | Int64
+  getter concurrentFibers : Array(Fiber)
+  getter concurrentMutex : Mutex
 
   def initialize(@source : IO, @destination : IO, @callback : Proc(Int64, Int64, Nil)? = nil, @heartbeat : Proc(Nil)? = nil)
-    @mutex = Mutex.new :unchecked
-    @workerFibers = [] of Fiber
-    @reliable = Reliable::Full
+    @sentSize = Atomic(Int64).new -1_i64
+    @receivedSize = Atomic(Int64).new -1_i64
+    @heartbeatInterval = 3_i32.seconds
+    @aliveInterval = 1_i32.minutes
+    @extraSentSize = 0_i32
+    @extraReceivedSize = 0_i32
+    @concurrentFibers = [] of Fiber
+    @concurrentMutex = Mutex.new :unchecked
   end
 
-  def destination_tls_context=(value : OpenSSL::SSL::Context::Client)
-    @destinationTlsContext = value
+  private def latest_alive_time=(value : Time)
+    @concurrentMutex.synchronize { @latestAliveTime = value }
   end
 
-  def destination_tls_context
-    @destinationTlsContext
-  end
-
-  def destination_tls_socket=(value : OpenSSL::SSL::Socket::Client)
-    @destinationTlsSocket = value
-  end
-
-  def destination_tls_socket
-    @destinationTlsSocket
+  private def latest_alive_time
+    @concurrentMutex.synchronize { @latestAliveTime }
   end
 
   def source_tls_context=(value : OpenSSL::SSL::Context::Server)
@@ -57,103 +52,48 @@ class Transport
     @sourceTlsSocket
   end
 
-  def heartbeat_interval=(value : Time::Span)
-    @heartbeatInterval = value
+  def destination_tls_context=(value : OpenSSL::SSL::Context::Client)
+    @destinationTlsContext = value
   end
 
-  def heartbeat_interval
-    @heartbeatInterval ||= 3_i32.seconds
+  def destination_tls_context
+    @destinationTlsContext
   end
 
-  private def sent_size=(value : Int64)
-    @mutex.synchronize { @sentSize = value }
+  def destination_tls_socket=(value : OpenSSL::SSL::Socket::Client)
+    @destinationTlsSocket = value
   end
 
-  def sent_size
-    @mutex.synchronize { @sentSize }
-  end
-
-  private def received_size=(value : Int64)
-    @mutex.synchronize { @receivedSize = value }
-  end
-
-  def received_size
-    @mutex.synchronize { @receivedSize }
-  end
-
-  private def latest_alive=(value : Time)
-    @mutex.synchronize { @latestAlive = value }
-  end
-
-  private def latest_alive
-    @mutex.synchronize { @latestAlive }
-  end
-
-  def alive_interval=(value : Time::Span)
-    @aliveInterval = value
-  end
-
-  def alive_interval
-    @aliveInterval || 1_i32.minutes
-  end
-
-  def extra_sent_size=(value : Int32 | Int64)
-    @extraUploadedSize = value
-  end
-
-  def extra_sent_size
-    @extraUploadedSize || 0_i32
-  end
-
-  def extra_received_size=(value : Int32 | Int64)
-    @extraReceivedSize = value
-  end
-
-  def extra_received_size
-    @extraReceivedSize || 0_i32
+  def destination_tls_socket
+    @destinationTlsSocket
   end
 
   def finished?
-    dead_count = @mutex.synchronize { workerFibers.count { |fiber| fiber.dead? } }
-    all_task_size = @mutex.synchronize { workerFibers.size }
-
-    dead_count == all_task_size
+    concurrentMutex.synchronize { concurrentFibers.all? { |fiber| fiber.dead? } }
   end
 
-  def reliable_status(reliable : Reliable = self.reliable)
-    ->do
-      case reliable
-      in .half?
-        self.sent_size || self.received_size
-      in .full?
-        self.sent_size && self.received_size
-      in .source?
-        self.sent_size
-      in .destination?
-        self.received_size
-      end
-    end
+  def done? : Bool
+    sent_done = 0_i64 <= sentSize.get
+    received_done = 0_i64 <= receivedSize.get
+
+    sent_done || received_done
   end
 
-  def cleanup_all
+  def cleanup
     source.close rescue nil
     destination.close rescue nil
 
     loop do
-      finished = self.finished?
+      sleep 0.25_f32.seconds unless finished = self.finished?
 
-      if finished
-        free_source_tls
-        free_destination_tls
+      free_source_tls
+      free_destination_tls
 
-        break
-      end
-
-      sleep 0.25_f32
+      break
     end
   end
 
-  def cleanup_side(side : Side, free_tls : Bool)
+  def cleanup(side : Side, free_tls : Bool)
     case side
     in .source?
       source.close rescue nil
@@ -162,67 +102,55 @@ class Transport
     end
 
     loop do
-      finished = self.finished?
+      sleep 0.25_f32.seconds unless finished = self.finished?
 
-      if finished
-        case side
-        in .source?
-          free_source_tls
-        in .destination?
-          free_destination_tls
-        end
-
-        break
+      case side
+      in .source?
+        free_source_tls
+      in .destination?
+        free_destination_tls
       end
 
-      sleep 0.25_f32
+      break
     end
   end
 
-  def free_source_tls
+  private def free_source_tls
     source_tls_socket.try &.free
     source_tls_context.try &.free
   end
 
-  def free_destination_tls
+  private def free_destination_tls
     destination_tls_socket.try &.free
     destination_tls_context.try &.free
   end
 
-  def update_latest_alive
-    self.latest_alive = Time.local
-  end
-
-  def add_worker_fiber(fiber : Fiber)
-    @mutex.synchronize { @workerFibers << fiber }
-  end
-
   def perform
-    update_latest_alive
+    self.latest_alive_time = Time.local
 
     sent_fiber = spawn do
       exception = nil
       count = 0_i64
 
       loop do
-        size = begin
-          IO.super_copy(source, destination) { update_latest_alive }
+        copy_size = begin
+          IO.yield_copy(src: source, dst: destination) { |count, length| self.latest_alive_time = Time.local }
         rescue ex : IO::CopyException
           exception = ex.cause
           ex.count
         end
 
-        size.try { |_size| count += _size }
-
-        break unless _latest_alive = latest_alive
-        break if alive_interval <= (Time.local - _latest_alive)
-        break if received_size && exception
-
+        copy_size.try { |_copy_size| count += _copy_size }
+        break unless _latest_alive = latest_alive_time
+        break if aliveInterval <= (Time.local - _latest_alive)
+        break if 0_i64 <= receivedSize.get
         next sleep 0.05_f32.seconds if exception.is_a? IO::TimeoutError
+
         break
       end
 
-      self.sent_size = (count || 0_i64) + extra_sent_size
+      count += 1_i64 if 0_i64 < count
+      @sentSize.add (count + extraSentSize)
     end
 
     receive_fiber = spawn do
@@ -230,45 +158,49 @@ class Transport
       count = 0_i64
 
       loop do
-        size = begin
-          IO.super_copy(destination, source) { update_latest_alive }
+        copy_size = begin
+          IO.yield_copy(src: destination, dst: source) { |count, length| self.latest_alive_time = Time.local }
         rescue ex : IO::CopyException
           exception = ex.cause
           ex.count
         end
 
-        size.try { |_size| count += _size }
-
-        break unless _latest_alive = latest_alive
-        break if alive_interval <= (Time.local - _latest_alive)
-        break if sent_size && exception
-
+        copy_size.try { |_copy_size| count += _copy_size }
+        break unless _latest_alive = latest_alive_time
+        break if aliveInterval <= (Time.local - _latest_alive)
+        break if 0_i64 <= sentSize.get
         next sleep 0.05_f32.seconds if exception.is_a? IO::TimeoutError
+
         break
       end
 
-      self.received_size = (count || 0_i64) + extra_received_size
+      count += 1_i64 if 0_i64 < count
+      @receivedSize.add (count + extraReceivedSize)
     end
 
     mixed_fiber = spawn do
       loop do
-        _sent_size = sent_size
-        _received_size = received_size
+        _sent_size = sentSize.get
+        _received_size = receivedSize.get
 
-        if _sent_size && _received_size
-          break callback.try &.call _sent_size, _received_size
+        if (0_i64 <= _sent_size) && (0_i64 <= _received_size)
+          callback.try &.call _sent_size, _received_size
+
+          break
         end
 
         next sleep 0.25_f32.seconds unless heartbeat
-        next sleep 0.25_f32.seconds if sent_size || received_size
+        next sleep 0.25_f32.seconds if (0_i64 <= _sent_size) || (0_i64 <= _received_size)
 
         heartbeat.try &.call rescue nil
-        sleep heartbeat_interval.seconds
+        sleep heartbeatInterval.seconds
       end
     end
 
-    add_worker_fiber sent_fiber
-    add_worker_fiber receive_fiber
-    add_worker_fiber mixed_fiber
+    @concurrentMutex.synchronize do
+      @concurrentFibers << sent_fiber
+      @concurrentFibers << receive_fiber
+      @concurrentFibers << mixed_fiber
+    end
   end
 end

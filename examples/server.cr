@@ -14,7 +14,6 @@ dns_resolver = DNS::Resolver.new dns_servers
 # Finally, you call `SOCKS::Server::Processor.perform` to automatically process.
 # This example is used to demonstrate how to use it, you can modify it as appropriate.
 
-transport_reliable = Transport::Reliable::Half
 server_options = SOCKS::Server::Options.new
 server_options.allowWebSocketKeepAlive = true
 
@@ -60,6 +59,6 @@ loop do
     end
 
     processor = SOCKS::Server::Processor.new session: session
-    processor.perform server: server, reliable: transport_reliable
+    processor.perform server: server
   end
 end

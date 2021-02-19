@@ -1,34 +1,16 @@
 class SOCKS::Server
   class Processor
     property session : Session
+    property udpAliveInterval : Time::Span
+    property aliveInterval : Time::Span
+    property heartbeatInterval : Time::Span
     property closed : Bool?
 
     def initialize(@session : Session)
+      @udpAliveInterval = 5_i32.seconds
+      @aliveInterval = 30_i32.seconds
+      @heartbeatInterval = 3_i32.seconds
       @closed = nil
-    end
-
-    def alive_interval=(value : Time::Span)
-      @aliveInterval = value
-    end
-
-    def alive_interval
-      @aliveInterval || 1_i32.minutes
-    end
-
-    def udp_alive_interval=(value : Time::Span)
-      @udpAliveInterval = value
-    end
-
-    def udp_alive_interval
-      @udpAliveInterval ||= 5_i32.seconds
-    end
-
-    def heartbeat_interval=(value : Time::Span)
-      @heartbeatInterval = value
-    end
-
-    def heartbeat_interval
-      @heartbeatInterval ||= 3_i32.seconds
     end
 
     def keep_alive=(value : Bool?)
@@ -39,9 +21,9 @@ class SOCKS::Server
       @keepAlive
     end
 
-    def perform(server : Server, reliable : Transport::Reliable = Transport::Reliable::Half)
+    def perform(server : Server)
       return session.close unless outbound = session.outbound
-      perform outbound: outbound, reliable: reliable
+      perform outbound: outbound
 
       loop do
         break unless session.options.allowWebSocketKeepAlive
@@ -63,24 +45,23 @@ class SOCKS::Server
           break
         end
 
-        perform outbound: outbound, reliable: reliable
+        perform outbound: outbound
       end
     end
 
-    private def perform(outbound : IO, reliable : Transport::Reliable)
+    private def perform(outbound : IO)
       self.keep_alive = nil
 
-      transport = Transport.new session, outbound, heartbeat: heartbeat_proc
-      transport.reliable = reliable
-      set_transport_options transport
+      transport = Transport.new source: session, destination: outbound, heartbeat: heartbeat_proc
+      set_transport_options transport: transport
       transport.perform
 
       loop do
-        break if check_inbound_keep_alive transport
-        break if check_holding_keep_alive transport
+        break if check_inbound_keep_alive transport: transport
+        break if check_holding_keep_alive transport: transport
 
-        if transport.reliable_status.call
-          transport.cleanup_all
+        if transport.done?
+          transport.cleanup
           self.keep_alive = false
 
           break
@@ -91,14 +72,13 @@ class SOCKS::Server
     end
 
     private def set_transport_options(transport : Transport)
-      if transport.destination.is_a? UDPSocket
-        udp_alive_interval.try { |_udp_alive_interval| transport.alive_interval = _udp_alive_interval }
-
-        return
+      if transport.destination.is_a? UDPOutbound
+        transport.aliveInterval = udpAliveInterval
+      else
+        transport.aliveInterval = aliveInterval
       end
 
-      alive_interval.try { |_alive_interval| transport.alive_interval = _alive_interval }
-      heartbeat_interval.try { |_heartbeat_interval| transport.heartbeat_interval = _heartbeat_interval }
+      transport.heartbeatInterval = heartbeatInterval
     end
 
     private def check_support_keep_alive? : Bool
@@ -113,14 +93,14 @@ class SOCKS::Server
       return false unless _session_inbound.is_a? Enhanced::WebSocket
 
       loop do
-        next sleep 0.25_f32.seconds unless transport.reliable_status.call
+        next sleep 0.25_f32.seconds unless transport.done?
         transport.destination.close rescue nil
 
         loop do
           next sleep 0.25_f32.seconds unless transport.finished?
 
           unless _session_inbound.keep_alive?
-            transport.cleanup_all
+            transport.cleanup
 
             self.keep_alive = false
             _session_inbound.keep_alive = nil
@@ -133,7 +113,7 @@ class SOCKS::Server
             event = _session_inbound.receive_pong_event!
             raise Exception.new String.build { |io| io << "Received from IO to failure status (" << event.to_s << ")." } unless event.confirmed?
           rescue ex
-            transport.cleanup_all
+            transport.cleanup
 
             self.keep_alive = false
             _session_inbound.keep_alive = nil
@@ -141,7 +121,7 @@ class SOCKS::Server
             return true
           end
 
-          transport.cleanup_side Transport::Side::Destination, free_tls: true
+          transport.cleanup Transport::Side::Destination, free_tls: true
 
           self.keep_alive = true
           _session_inbound.keep_alive = nil
@@ -156,7 +136,8 @@ class SOCKS::Server
       return false unless _session_holding.is_a? Enhanced::WebSocket
 
       loop do
-        if transport.reliable_status.call
+        if transport.done?
+          transport.destination.close rescue nil
           _session_holding.process_enhanced_ping! rescue nil
 
           break
@@ -165,13 +146,11 @@ class SOCKS::Server
         sleep 0.25_f32.seconds
       end
 
-      transport.destination.close rescue nil
-
       loop do
         next sleep 0.25_f32.seconds unless transport.finished?
 
         unless _session_holding.keep_alive?
-          transport.cleanup_all
+          transport.cleanup
 
           self.keep_alive = false
           _session_holding.keep_alive = nil
@@ -184,7 +163,7 @@ class SOCKS::Server
           event = _session_holding.receive_pong_event!
           raise Exception.new String.build { |io| io << "Received from IO to failure status (" << event.to_s << ")." } unless event.confirmed?
         rescue ex
-          transport.cleanup_all
+          transport.cleanup
 
           self.keep_alive = false
           _session_holding.keep_alive = nil
@@ -192,7 +171,7 @@ class SOCKS::Server
           return true
         end
 
-        transport.cleanup_side Transport::Side::Destination, free_tls: true
+        transport.cleanup Transport::Side::Destination, free_tls: true
 
         session.inbound.close rescue nil
         session.inbound = _session_holding
