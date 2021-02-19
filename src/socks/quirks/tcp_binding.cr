@@ -1,9 +1,9 @@
 module SOCKS::Quirks
   class TCPBinding < IO
-    property server : TCPServer
-    property timeout : TimeOut
-    property socket : TCPSocket?
-    property closed : Bool?
+    getter server : TCPServer
+    getter timeout : TimeOut
+    getter socket : TCPSocket?
+    getter closed : Bool?
 
     def initialize(@server : TCPServer, @timeout : TimeOut = TimeOut.new)
       @socket = nil

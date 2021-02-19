@@ -1,10 +1,10 @@
 module SOCKS::Quirks
   class AssociateUDP < IO
-    property io : UDPSocket
-    property timeout : TimeOut
-    property sourceIpAddress : Socket::IPAddress?
-    property fragment : Frames::Fragment?
-    property mutex : Mutex
+    getter io : UDPSocket
+    getter timeout : TimeOut
+    getter sourceIpAddress : Socket::IPAddress?
+    getter fragment : Frames::Fragment?
+    getter mutex : Mutex
 
     def initialize(@io : UDPSocket, @timeout : TimeOut = TimeOut.udp_default)
       @sourceIpAddress = nil

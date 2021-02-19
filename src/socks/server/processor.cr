@@ -136,14 +136,12 @@ class SOCKS::Server
       return false unless _session_holding.is_a? Enhanced::WebSocket
 
       loop do
-        if transport.done?
-          transport.destination.close rescue nil
-          _session_holding.process_enhanced_ping! rescue nil
+        next sleep 0.25_f32.seconds unless transport.done?
 
-          break
-        end
+        transport.destination.close rescue nil
+        _session_holding.process_enhanced_ping! rescue nil
 
-        sleep 0.25_f32.seconds
+        break
       end
 
       loop do

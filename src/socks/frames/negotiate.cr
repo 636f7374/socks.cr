@@ -104,14 +104,35 @@ struct SOCKS::Frames
       io.write memory.to_slice
     end
 
-    def self.read_reply(io : IO, version_flag : VersionFlag = VersionFlag::V5, with_authenticate : Bool? = false) : Negotiate
+    def self.read_reply(io : IO, version_flag : VersionFlag = VersionFlag::V5) : Negotiate
       io_version_flag = Frames.strict_read_version! io: io, version_flag: version_flag
       frame = new version: io_version_flag, arType: ARType::Reply
 
-      accepted_method = Frames.read_authentication! io: io
+      # Note: When the number of authentication methods is 1 and UserNamePassword, the authenticateFrame is not always attached.
+      # Buffer allocation instructions:
+      # 1 Bytes: authenticationChoiceType
+      # If authenticationMethod == AuthenticationFlag::UserNamePassword
+      # > 1 Bytes: UserName Next Length
+      # > 255 Bytes: Maximum UserName (UInt8::MAX)
+      # > 1 Bytes: Password Next Length
+      # > 255 Bytes: Maximum Password (UInt8::MAX)
+      # Else
+      # > There are 10 authentication methods (includes IANA), should we allocate 4096 Bytes? Or fail?
+      # End
+
+      buffer = uninitialized UInt8[513_i32]
+      read_length = io.read buffer.to_slice
+      memory = IO::Memory.new read_length
+      memory.write buffer.to_slice[0_i32, read_length]
+      memory.rewind
+
+      accepted_method = Frames.read_authentication! io: memory
       frame.acceptedMethod = accepted_method
 
-      frame.authenticateFrame = Authenticate.from_io io: io, ar_type: ARType::Reply, version_flag: version_flag if with_authenticate
+      if (memory.pos < memory.size) && accepted_method == AuthenticationFlag::UserNamePassword
+        frame.authenticateFrame = Authenticate.from_io io: memory, ar_type: ARType::Reply, version_flag: version_flag
+      end
+
       frame.successed = true
 
       frame

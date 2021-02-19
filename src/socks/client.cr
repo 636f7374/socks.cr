@@ -190,12 +190,7 @@ class SOCKS::Client < IO
 
     # Receive Negotiate Reply.
 
-    if (1_i32 == uniq_authentication_methods.size) && uniq_authentication_methods.first.user_name_password?
-      from_negotiate = Frames::Negotiate.read_reply io: outbound, version_flag: version, with_authenticate: true
-    else
-      from_negotiate = Frames::Negotiate.from_io io: outbound, ar_type: ARType::Reply, version_flag: version
-    end
-
+    from_negotiate = Frames::Negotiate.from_io io: outbound, ar_type: ARType::Reply, version_flag: version
     exchangeFrames << from_negotiate
     raise Exception.new "Client.handshake!: Negotiate.acceptedMethod cannot be Nil!" unless accepted_method = from_negotiate.acceptedMethod
 
@@ -214,7 +209,7 @@ class SOCKS::Client < IO
     when .user_name_password?
       # If there is more than one authenticationMethod, sub-steps are required.
 
-      if 1_i32 < uniq_authentication_methods.size
+      if (1_i32 < uniq_authentication_methods.size) || from_negotiate.authenticateFrame.nil?
         raise Exception.new "Client.handshake!: Your authenticationMethods is UserNamePassword, but you did not provide Authenticate Frame." unless _authenticate_frame = authenticate_frame
 
         exchangeFrames << _authenticate_frame

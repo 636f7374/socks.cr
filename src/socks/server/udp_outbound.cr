@@ -1,8 +1,9 @@
 class SOCKS::Server
   class UDPOutbound < IO
-    property io : UDPSocket
+    getter io : UDPSocket
+    getter timeout : TimeOut
 
-    def initialize(@io : UDPSocket)
+    def initialize(@io : UDPSocket, @timeout : TimeOut)
     end
 
     def read_timeout=(value : Int | Time::Span | Nil)
@@ -51,7 +52,7 @@ class SOCKS::Server
     def write(slice : Bytes) : Nil
       return nil if slice.empty?
 
-      io.connect io.remote_address
+      io.connect io.remote_address, connect_timeout: timeout.connect
       io.send slice
     end
 

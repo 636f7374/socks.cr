@@ -8,6 +8,7 @@ class Transport
   property destination : IO
   getter callback : Proc(Int64, Int64, Nil)?
   getter heartbeat : Proc(Nil)?
+  getter latestAliveTime : Time
   getter sentSize : Atomic(Int64)
   getter receivedSize : Atomic(Int64)
   property heartbeatInterval : Time::Span
@@ -18,6 +19,7 @@ class Transport
   getter concurrentMutex : Mutex
 
   def initialize(@source : IO, @destination : IO, @callback : Proc(Int64, Int64, Nil)? = nil, @heartbeat : Proc(Nil)? = nil)
+    @latestAliveTime = Time.local
     @sentSize = Atomic(Int64).new -1_i64
     @receivedSize = Atomic(Int64).new -1_i64
     @heartbeatInterval = 3_i32.seconds
@@ -76,7 +78,7 @@ class Transport
     sent_done = 0_i64 <= sentSize.get
     received_done = 0_i64 <= receivedSize.get
 
-    sent_done || received_done
+    finished? || sent_done || received_done
   end
 
   def cleanup
@@ -84,7 +86,7 @@ class Transport
     destination.close rescue nil
 
     loop do
-      sleep 0.25_f32.seconds unless finished = self.finished?
+      next sleep 0.25_f32.seconds unless finished = self.finished?
 
       free_source_tls
       free_destination_tls
@@ -102,7 +104,7 @@ class Transport
     end
 
     loop do
-      sleep 0.25_f32.seconds unless finished = self.finished?
+      next sleep 0.25_f32.seconds unless finished = self.finished?
 
       case side
       in .source?
@@ -141,8 +143,7 @@ class Transport
         end
 
         copy_size.try { |_copy_size| count += _copy_size }
-        break unless _latest_alive = latest_alive_time
-        break if aliveInterval <= (Time.local - _latest_alive)
+        break if aliveInterval <= (Time.local - latest_alive_time)
         break if 0_i64 <= receivedSize.get
         next sleep 0.05_f32.seconds if exception.is_a? IO::TimeoutError
 
@@ -150,6 +151,7 @@ class Transport
       end
 
       count += 1_i64 if 0_i64 < count
+      count = -1_i64 if count.zero?
       @sentSize.add (count + extraSentSize)
     end
 
@@ -166,8 +168,7 @@ class Transport
         end
 
         copy_size.try { |_copy_size| count += _copy_size }
-        break unless _latest_alive = latest_alive_time
-        break if aliveInterval <= (Time.local - _latest_alive)
+        break if aliveInterval <= (Time.local - latest_alive_time)
         break if 0_i64 <= sentSize.get
         next sleep 0.05_f32.seconds if exception.is_a? IO::TimeoutError
 
@@ -175,23 +176,33 @@ class Transport
       end
 
       count += 1_i64 if 0_i64 < count
+      count = -1_i64 if count.zero?
       @receivedSize.add (count + extraReceivedSize)
     end
 
     mixed_fiber = spawn do
       loop do
+        break if aliveInterval <= (Time.local - latest_alive_time)
+
         _sent_size = sentSize.get
         _received_size = receivedSize.get
 
-        if (0_i64 <= _sent_size) && (0_i64 <= _received_size)
+        # Negative two means zero, such as transmission failure.
+        # It can also be understood as `undefined`, `nil`.
+
+        greater_zero = (0_i64 <= _sent_size) && (0_i64 <= _received_size)
+        negative_two = (-2_i64 == _sent_size) || (-2_i64 == _received_size)
+
+        if greater_zero || negative_two
+          _sent_size = 0_i64 if -2_i64 == _sent_size
+          _received_size = 0_i64 if -2_i64 == _received_size
+
           callback.try &.call _sent_size, _received_size
 
           break
         end
 
         next sleep 0.25_f32.seconds unless heartbeat
-        next sleep 0.25_f32.seconds if (0_i64 <= _sent_size) || (0_i64 <= _received_size)
-
         heartbeat.try &.call rescue nil
         sleep heartbeatInterval.seconds
       end
