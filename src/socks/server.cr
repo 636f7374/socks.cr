@@ -1,23 +1,23 @@
 class SOCKS::Server
-  getter server : Socket::Server
+  getter io : Socket::Server
   getter dnsResolver : DNS::Resolver
-  getter options : Server::Options
+  getter options : Options
 
-  def initialize(@server : Socket::Server, @dnsResolver : DNS::Resolver, @options : Server::Options = Server::Options.new)
+  def initialize(@io : Socket::Server, @dnsResolver : DNS::Resolver, @options : Options = Options.new)
   end
 
-  def self.new(host : String, port : Int32, dns_resolver : DNS::Resolver, options : Server::Options = Server::Options.new)
+  def self.new(host : String, port : Int32, dns_resolver : DNS::Resolver, options : Options = Options.new)
     tcp_server = TCPServer.new host: host, port: port
-    new server: tcp_server, dnsResolver: dns_resolver, options: options
+    new io: tcp_server, dnsResolver: dns_resolver, options: options
   end
 
   def local_address : Socket::Address?
-    _server = server
+    _server = io
     _wrapped.responds_to?(:local_address) ? _server.local_address : nil
   end
 
   def remote_address : Socket::Address?
-    _server = server
+    _server = io
     _server.responds_to?(:remote_address) ? _server.remote_address : nil
   end
 
@@ -101,9 +101,8 @@ class SOCKS::Server
       session.exchangeFrames << frame_negotiate
 
       message = String.build do |io|
-        io << "Server.handshake!: The authentication method requested by the client (" << _negotiate_methods.to_s << ") "
-        io << "is inconsistent with the authentication method set by the server ("
-        io << authentication.to_s << ")."
+        io << "Server.handshake!: The authentication method requested by the client (" << _negotiate_methods.to_s
+        io << ") " << "is inconsistent with the authentication method set by the server (" << authentication.to_s << ")."
       end
 
       raise Exception.new message
@@ -132,7 +131,7 @@ class SOCKS::Server
       from_authentication = Frames::Authenticate.from_io io: session, ar_type: ARType::Ask, version_flag: version
       session.exchangeFrames << from_authentication
       raise Exception.new "Server.handshake!: Frames::Authenticate.authenticationChoiceType cannot be Nil!" unless authentication_choice_type = from_authentication.authenticationChoiceType
-      raise Exception.new "Server.handshake!: The verifyType provided by the client Authentication is inconsistent with the verifyType provided by the client Negotiate" unless authentication_choice_type.user_name_password?
+      raise Exception.new "Server.handshake!: The authenticationChoiceType provided by the client Authentication is inconsistent with the authenticationChoiceType provided by the client Negotiate." unless authentication_choice_type.user_name_password?
 
       frame_authenticate = Frames::Authenticate.new version: version, arType: ARType::Reply
       frame_authenticate.authenticationChoiceType = Frames::AuthenticationChoiceFlag::UserNamePassword
@@ -152,6 +151,11 @@ class SOCKS::Server
       return true
     end
 
+    reply_frame_negotiate = Frames::Negotiate.new version: version, arType: ARType::Reply
+    reply_frame_negotiate.acceptedMethod = AuthenticationFlag::NoAcceptableMethods
+    reply_frame_negotiate.to_io session
+    session.exchangeFrames << reply_frame_negotiate
+
     raise Exception.new "Server.handshake: Unsupported authentication method or client authentication method is inconsistent with the authentication method preset by the server"
   end
 
@@ -160,6 +164,13 @@ class SOCKS::Server
     session.exchangeFrames << from_establish
     raise Exception.new "Server.establish!: Establish.commandType cannot be Nil!" unless command_type = from_establish.commandType
     raise Exception.new "Server.establish!: Establish.destinationAddress or destinationIpAddress cannot be Nil!" unless destination_address = from_establish.get_destination_address
+
+    begin
+      check_destination_protection! destination_address: destination_address
+    rescue ex
+      send_establish_frame session: session, status_flag: Frames::StatusFlag::ConnectionDenied, destination_ip_address: nil
+      raise ex
+    end
 
     # Check if Options::Server accept TCPBinding or AssociateUDP
 
@@ -276,16 +287,39 @@ class SOCKS::Server
     true
   end
 
-  def create_bind_socket(session : Session, command_type : Frames::CommandFlag, tcp_timeout : TimeOut = TimeOut.new, udp_timeout : TimeOut = TimeOut.udp_default) : Tuple(Socket::IPAddress?, Quirks::TCPBinding | Quirks::AssociateUDP)?
+  private def check_destination_protection!(destination_address : Address | Socket::IPAddress) : Bool
+    return true unless destination_protection = options.destinationProtection
+
+    case destination_address
+    in Address
+      raise Exception.new "Server.check_destination_protection!: Establish.destinationAddress is in your preset destinationProtection!" if destination_protection.addresses.includes? destination_address
+    in Socket::IPAddress
+      server_local_address = io.local_address
+
+      case server_local_address
+      in Socket::UNIXAddress
+      in Socket::IPAddress
+        raise Exception.new "Server.check_destination_protection!: Establish.destinationAddress conflicts with your server address!" if InterfaceAddress.includes? ip_address: destination_address, interface_port: server_local_address.port
+      in Socket::Address
+      end
+
+      raise Exception.new "Server.check_destination_protection!: Establish.destinationAddress is in your preset destinationProtection!" if destination_protection.ipAddresses.includes? destination_address
+    end
+
+    true
+  end
+
+  private def create_bind_socket(session : Session, command_type : Frames::CommandFlag, tcp_timeout : TimeOut = TimeOut.new, udp_timeout : TimeOut = TimeOut.udp_default) : Tuple(Socket::IPAddress?, Quirks::TCPBinding | Quirks::AssociateUDP)?
     case command_type
-    when .tcp_binding?
+    in .tcp_connection?
+    in .tcp_binding?
       create_tcp_bind_socket session: session, timeout: tcp_timeout
-    when .associate_udp?
+    in .associate_udp?
       create_udp_bind_socket session: session, timeout: udp_timeout
     end
   end
 
-  def create_tcp_bind_socket(session : Session, timeout : TimeOut = TimeOut.udp_default) : Tuple(Socket::IPAddress?, Quirks::TCPBinding)
+  private def create_tcp_bind_socket(session : Session, timeout : TimeOut = TimeOut.udp_default) : Tuple(Socket::IPAddress?, Quirks::TCPBinding)
     session_local_address = session.local_address rescue nil if session.responds_to? :local_address
 
     unless session_local_address
@@ -320,7 +354,7 @@ class SOCKS::Server
     Tuple.new (socket.server_local_address rescue nil), socket
   end
 
-  def create_udp_bind_socket(session : Session, timeout : TimeOut = TimeOut.udp_default) : Tuple(Socket::IPAddress?, Quirks::AssociateUDP)
+  private def create_udp_bind_socket(session : Session, timeout : TimeOut = TimeOut.udp_default) : Tuple(Socket::IPAddress?, Quirks::AssociateUDP)
     session_local_address = session.local_address rescue nil if session.responds_to? :local_address
 
     unless session_local_address
@@ -356,7 +390,7 @@ class SOCKS::Server
     Tuple.new (socket.local_address rescue nil), socket
   end
 
-  def send_establish_frame(session : Session, status_flag : Frames::StatusFlag, destination_ip_address : Socket::IPAddress) : Bool
+  private def send_establish_frame(session : Session, status_flag : Frames::StatusFlag, destination_ip_address : Socket::IPAddress) : Bool
     frame_establish = Frames::Establish.new version: version, arType: ARType::Reply
     frame_establish.statusType = status_flag
 
@@ -375,7 +409,7 @@ class SOCKS::Server
     true
   end
 
-  def send_establish_frame(session : Session, status_flag : Frames::StatusFlag, destination_ip_address : Nil) : Bool
+  private def send_establish_frame(session : Session, status_flag : Frames::StatusFlag, destination_ip_address : Nil) : Bool
     frame_establish = Frames::Establish.new version: version, arType: ARType::Reply
     frame_establish.statusType = status_flag
 
@@ -388,7 +422,7 @@ class SOCKS::Server
   end
 
   def accept? : Session?
-    return unless socket = server.accept?
+    return unless socket = io.accept?
 
     client_timeout.try do |_timeout|
       socket.read_timeout = _timeout.read if socket.responds_to? :read_timeout=
