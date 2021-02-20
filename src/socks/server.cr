@@ -152,7 +152,7 @@ class SOCKS::Server
     end
 
     reply_frame_negotiate = Frames::Negotiate.new version: version, arType: ARType::Reply
-    reply_frame_negotiate.acceptedMethod = AuthenticationFlag::NoAcceptableMethods
+    reply_frame_negotiate.acceptedMethod = Frames::AuthenticationFlag::NoAcceptableMethods
     reply_frame_negotiate.to_io session
     session.exchangeFrames << reply_frame_negotiate
 
