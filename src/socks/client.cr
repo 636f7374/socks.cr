@@ -18,7 +18,7 @@ class SOCKS::Client < IO
   end
 
   def self.new(ip_address : Socket::IPAddress, dns_resolver : DNS::Resolver, timeout : TimeOut = TimeOut.new)
-    socket = TCPSocket.connect ip_address, connect_timeout: timeout.connect
+    socket = TCPSocket.new ip_address: ip_address, connect_timeout: timeout.connect
 
     socket.read_timeout = timeout.read
     socket.write_timeout = timeout.write

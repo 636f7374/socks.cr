@@ -12,13 +12,13 @@ class SOCKS::Server
   end
 
   def local_address : Socket::Address?
-    _server = io
-    _wrapped.responds_to?(:local_address) ? _server.local_address : nil
+    _io = io
+    _io.responds_to?(:local_address) ? _io.local_address : nil
   end
 
   def remote_address : Socket::Address?
-    _server = io
-    _server.responds_to?(:remote_address) ? _server.remote_address : nil
+    _io = io
+    _io.responds_to?(:remote_address) ? _io.remote_address : nil
   end
 
   def authentication=(value : Frames::AuthenticationFlag)
