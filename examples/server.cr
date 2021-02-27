@@ -5,8 +5,8 @@ require "../src/socks.cr"
 # Especially if you enable `IpCache`, it will speed up DNS queries.
 
 dns_servers = Set(DNS::Resolver::Address).new
-dns_servers << DNS::Resolver::Address.new ipAddress: Socket::IPAddress.new("8.8.8.8", 853_i32), protocolType: DNS::ProtocolType::TLS
-dns_servers << DNS::Resolver::Address.new ipAddress: Socket::IPAddress.new("8.8.4.4", 53_i32), protocolType: DNS::ProtocolType::UDP
+dns_servers << DNS::Resolver::Address.new ipAddress: Socket::IPAddress.new("8.8.8.8", 53_i32), protocolType: DNS::ProtocolType::UDP
+dns_servers << DNS::Resolver::Address.new ipAddress: Socket::IPAddress.new("8.8.4.4", 853_i32), protocolType: DNS::ProtocolType::TLS
 dns_resolver = DNS::Resolver.new dns_servers
 
 # `Transport::Reliable` to ensure connection stability, usually `Transport::Reliable::Half`.
