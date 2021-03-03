@@ -6,11 +6,6 @@ class SOCKS::Server
   def initialize(@io : Socket::Server, @dnsResolver : DNS::Resolver, @options : Options = Options.new)
   end
 
-  def self.new(host : String, port : Int32, dns_resolver : DNS::Resolver, options : Options = Options.new)
-    tcp_server = TCPServer.new host: host, port: port
-    new io: tcp_server, dnsResolver: dns_resolver, options: options
-  end
-
   def local_address : Socket::Address?
     _io = io
     _io.responds_to?(:local_address) ? _io.local_address : nil

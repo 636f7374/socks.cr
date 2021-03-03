@@ -1,23 +1,23 @@
 require "../src/socks.cr"
 
-# Use `Durian.getaddrinfo` instead of `C.getaddrinfo`, fast and stable DNS resolver.
-# Durian will send and receive DNS requests in parallel.
-# Especially if you enable `IpCache`, it will speed up DNS queries.
+# Use `DNS.getaddrinfo` instead of `C.getaddrinfo`, fast and stable DNS resolver.
+# DNS.cr will send and receive DNS requests in concurrent.
 
 dns_servers = Set(DNS::Resolver::Address).new
 dns_servers << DNS::Resolver::Address.new ipAddress: Socket::IPAddress.new("8.8.8.8", 53_i32), protocolType: DNS::ProtocolType::UDP
 dns_servers << DNS::Resolver::Address.new ipAddress: Socket::IPAddress.new("8.8.4.4", 853_i32), protocolType: DNS::ProtocolType::TLS
 dns_resolver = DNS::Resolver.new dns_servers
 
-# `Transport::Reliable` to ensure connection stability, usually `Transport::Reliable::Half`.
 # `SOCKS::Server::Options`, adjust the server policy, such as whether to allow WebSocketKeepAlive.
-# Finally, you call `SOCKS::Server::Processor.perform` to automatically process.
+# Finally, you call `SOCKS::SessionProcessor.perform` to automatically process.
 # This example is used to demonstrate how to use it, you can modify it as appropriate.
 
 options = SOCKS::Options.new
 options.server.allowWebSocketKeepAlive = true
 
-server = SOCKS::Server.new host: "0.0.0.0", port: 1234_i32, dns_resolver: dns_resolver, options: options
+tcp_server = TCPServer.new host: "0.0.0.0", port: 1234_i32
+server = SOCKS::Server.new io: tcp_server, dnsResolver: dns_resolver, options: options
+
 server.establish_tcp_outbound_timeout = SOCKS::TimeOut.new
 server.establish_udp_outbound_timeout = SOCKS::TimeOut.udp_default
 server.establish_tcp_bind_timeout = SOCKS::TimeOut.new
