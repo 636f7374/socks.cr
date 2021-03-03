@@ -159,7 +159,7 @@ class SOCKS::Server
     raise Exception.new "Server.handshake: Unsupported authentication method or client authentication method is inconsistent with the authentication method preset by the server"
   end
 
-  def establish!(session : Session) : Bool
+  def establish!(session : Session, sync_create_outbound_socket : Bool = true) : Bool
     from_establish = Frames::Establish.from_io io: session, ar_type: ARType::Ask, version_flag: version
     session.exchangeFrames << from_establish
     raise Exception.new "Server.establish!: Establish.commandType cannot be Nil!" unless command_type = from_establish.commandType
@@ -190,7 +190,7 @@ class SOCKS::Server
 
     # Create Outbound Socket
 
-    if options.server.syncCreateOutboundSocket
+    if sync_create_outbound_socket
       begin
         outbound_socket = SOCKS.create_outbound_socket command_type: command_type, destination_address: destination_address,
           dns_resolver: dnsResolver, tcp_timeout: establish_tcp_bind_timeout, udp_timeout: establish_udp_bind_timeout
@@ -237,7 +237,7 @@ class SOCKS::Server
     case command_type
     when .tcp_connection?
       status_flag = Frames::StatusFlag::IndicatesSuccess
-      outbound_socket_remote_address = Socket::IPAddress.new("0.0.0.0", 0_i32) unless options.server.syncCreateOutboundSocket
+      outbound_socket_remote_address = Socket::IPAddress.new("0.0.0.0", 0_i32) unless sync_create_outbound_socket
 
       unless outbound_socket_remote_address
         status_flag = Frames::StatusFlag::NetworkUnreachable

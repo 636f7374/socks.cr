@@ -21,14 +21,12 @@ struct SOCKS::Options
     property allowWebSocketKeepAlive : Bool
     property allowTCPBinding : Bool
     property allowAssociateUDP : Bool
-    property syncCreateOutboundSocket : Bool
     property destinationProtection : DestinationProtection?
 
     def initialize
       @allowWebSocketKeepAlive = false
       @allowTCPBinding = true
       @allowAssociateUDP = true
-      @syncCreateOutboundSocket = true
       @destinationProtection = DestinationProtection.new
     end
 

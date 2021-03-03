@@ -6,11 +6,11 @@ class SOCKS::SessionProcessor
     @closed = nil
   end
 
-  def keep_alive=(value : Bool?)
+  private def keep_alive=(value : Bool?)
     @keepAlive = value
   end
 
-  def keep_alive?
+  private def keep_alive?
     @keepAlive
   end
 
