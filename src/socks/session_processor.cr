@@ -65,7 +65,7 @@ class SOCKS::SessionProcessor
   end
 
   private def set_transport_options(transport : Transport)
-    if transport.destination.is_a? Quirks::UDPOutbound
+    if transport.destination.is_a? Quirks::Server::UDPOutbound
       transport.aliveInterval = session.options.session.udpAliveInterval
     else
       transport.aliveInterval = session.options.session.aliveInterval

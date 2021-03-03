@@ -301,7 +301,7 @@ class SOCKS::Client < IO
         raise Exception.new "Client.establish!: SOCKS.create_outbound_socket type is not UDPSocket!"
       end
 
-      associate_udp = AssociateUDP.new io: bind_outbound_socket, addressType: frame_establish.addressType
+      associate_udp = Quirks::Client::AssociateUDP.new io: bind_outbound_socket, addressType: frame_establish.addressType
 
       case destination_address
       in Socket::IPAddress
@@ -317,5 +317,5 @@ class SOCKS::Client < IO
   end
 end
 
-require "./client/*"
+require "./quirks/client/*"
 require "./enhanced/*"
