@@ -58,7 +58,7 @@ loop do
       next
     end
 
-    processor = SOCKS::Server::Processor.new session: session
+    processor = SOCKS::SessionProcessor.new session: session
     processor.perform server: server
   end
 end

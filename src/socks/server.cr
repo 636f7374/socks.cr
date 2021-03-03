@@ -268,7 +268,7 @@ class SOCKS::Server
       if command_type.associate_udp?
         _outbound = outbound_socket
         raise Exception.new "Server.establish!: Server.create_bind_socket (AssociateUDP) type is not Quirks::AssociateUDP." unless _outbound.is_a? UDPSocket
-        session.outbound = UDPOutbound.new io: _outbound, timeout: establish_udp_bind_timeout
+        session.outbound = Quirks::UDPOutbound.new io: _outbound, timeout: establish_udp_bind_timeout
       end
 
       if command_type.tcp_binding?
@@ -433,6 +433,5 @@ class SOCKS::Server
   end
 end
 
-require "./server/*"
 require "./enhanced/*"
 require "./quirks/*"

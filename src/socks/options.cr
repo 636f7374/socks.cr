@@ -1,7 +1,20 @@
 struct SOCKS::Options
+  property session : Session
   property server : Server
 
-  def initialize(@server : Server = Server.new)
+  def initialize(@session : Session = Session.new, @server : Server = Server.new)
+  end
+
+  struct Session
+    property udpAliveInterval : Time::Span
+    property aliveInterval : Time::Span
+    property heartbeatInterval : Time::Span
+
+    def initialize
+      @udpAliveInterval = 5_i32.seconds
+      @aliveInterval = 30_i32.seconds
+      @heartbeatInterval = 3_i32.seconds
+    end
   end
 
   struct Server

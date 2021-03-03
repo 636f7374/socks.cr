@@ -1,4 +1,4 @@
-class SOCKS::Server
+module SOCKS::Quirks
   class UDPOutbound < IO
     getter io : UDPSocket
     getter timeout : TimeOut
