@@ -14,10 +14,10 @@ dns_resolver = DNS::Resolver.new dns_servers
 # Finally, you call `SOCKS::Server::Processor.perform` to automatically process.
 # This example is used to demonstrate how to use it, you can modify it as appropriate.
 
-server_options = SOCKS::Server::Options.new
-server_options.allowWebSocketKeepAlive = true
+options = SOCKS::Options.new
+options.server.allowWebSocketKeepAlive = true
 
-server = SOCKS::Server.new host: "0.0.0.0", port: 1234_i32, dns_resolver: dns_resolver, options: server_options
+server = SOCKS::Server.new host: "0.0.0.0", port: 1234_i32, dns_resolver: dns_resolver, options: options
 server.establish_tcp_outbound_timeout = SOCKS::TimeOut.new
 server.establish_udp_outbound_timeout = SOCKS::TimeOut.udp_default
 server.establish_tcp_bind_timeout = SOCKS::TimeOut.new

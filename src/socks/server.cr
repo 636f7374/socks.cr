@@ -177,12 +177,12 @@ class SOCKS::Server
     case command_type
     in .tcp_connection?
     in .tcp_binding?
-      unless options.allowTCPBinding
+      unless options.server.allowTCPBinding
         send_establish_frame session: session, status_flag: Frames::StatusFlag::UnsupportedCommand, destination_ip_address: nil
         raise Exception.new "Because you have disabled Options::Server.allowTCPBinding, this client connection is rejected (UnsupportedCommand)."
       end
     in .associate_udp?
-      unless options.allowAssociateUDP
+      unless options.server.allowAssociateUDP
         send_establish_frame session: session, status_flag: Frames::StatusFlag::UnsupportedCommand, destination_ip_address: nil
         raise Exception.new "Because you have disabled Options::Server.allowAssociateUDP, this client connection is rejected (UnsupportedCommand)."
       end
@@ -190,7 +190,7 @@ class SOCKS::Server
 
     # Create Outbound Socket
 
-    if options.syncCreateOutboundSocket
+    if options.server.syncCreateOutboundSocket
       begin
         outbound_socket = SOCKS.create_outbound_socket command_type: command_type, destination_address: destination_address,
           dns_resolver: dnsResolver, tcp_timeout: establish_tcp_bind_timeout, udp_timeout: establish_udp_bind_timeout
@@ -237,7 +237,7 @@ class SOCKS::Server
     case command_type
     when .tcp_connection?
       status_flag = Frames::StatusFlag::IndicatesSuccess
-      outbound_socket_remote_address = Socket::IPAddress.new("0.0.0.0", 0_i32) unless options.syncCreateOutboundSocket
+      outbound_socket_remote_address = Socket::IPAddress.new("0.0.0.0", 0_i32) unless options.server.syncCreateOutboundSocket
 
       unless outbound_socket_remote_address
         status_flag = Frames::StatusFlag::NetworkUnreachable
@@ -288,7 +288,7 @@ class SOCKS::Server
   end
 
   private def check_destination_protection!(destination_address : Address | Socket::IPAddress) : Bool
-    return true unless destination_protection = options.destinationProtection
+    return true unless destination_protection = options.server.destinationProtection
 
     case destination_address
     in Address

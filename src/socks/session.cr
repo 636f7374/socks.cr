@@ -1,11 +1,11 @@
 class SOCKS::Session < IO
   property inbound : IO
-  getter options : Server::Options
+  getter options : Options
   property exchangeFrames : Set(Frames)
   property outbound : IO?
   property holding : IO?
 
-  def initialize(@inbound : IO, @options : Server::Options)
+  def initialize(@inbound : IO, @options : Options)
     @exchangeFrames = Set(Frames).new
   end
 

@@ -1,5 +1,10 @@
-class SOCKS::Server
-  struct Options
+struct SOCKS::Options
+  property server : Server
+
+  def initialize(@server : Server = Server.new)
+  end
+
+  struct Server
     property allowWebSocketKeepAlive : Bool
     property allowTCPBinding : Bool
     property allowAssociateUDP : Bool

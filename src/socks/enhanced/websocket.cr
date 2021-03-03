@@ -15,13 +15,13 @@ module SOCKS::Enhanced
     end
 
     getter io : Protocol
-    getter options : Server::Options?
+    getter options : Options?
     getter windowRemaining : Atomic(Int32)
     getter buffer : IO::Memory
     getter ioMutex : Mutex
     getter mutex : Mutex
 
-    def initialize(@io : Protocol, @options : Server::Options? = nil)
+    def initialize(@io : Protocol, @options : Options? = nil)
       @windowRemaining = Atomic(Int32).new 0_i32
       @buffer = IO::Memory.new
       @ioMutex = Mutex.new :unchecked
@@ -104,7 +104,7 @@ module SOCKS::Enhanced
 
       case event
       in .keep_alive?
-        allow_keep_alive = options.try &.allowWebSocketKeepAlive
+        allow_keep_alive = options.try &.server.try &.allowWebSocketKeepAlive
 
         if allow_keep_alive
           pong EnhancedPong::Confirmed
