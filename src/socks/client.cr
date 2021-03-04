@@ -78,20 +78,20 @@ class SOCKS::Client < IO
     _io.write_timeout if _io.responds_to? :write_timeout
   end
 
-  def establish_tcp_bind_timeout=(value : TimeOut)
-    @establishTcpBindTimeout = value
+  def tcp_binding_timeout=(value : TimeOut)
+    @tcpBindingTimeout = value
   end
 
-  def establish_tcp_bind_timeout
-    @establishTcpBindTimeout ||= TimeOut.new
+  def tcp_binding_timeout
+    @tcpBindingTimeout ||= TimeOut.new
   end
 
-  def establish_udp_bind_timeout=(value : TimeOut)
-    @establishUdpBindTimeOut = value
+  def associate_udp_timeout=(value : TimeOut)
+    @associateUDPTimeOut = value
   end
 
-  def establish_udp_bind_timeout
-    @establishUdpBindTimeOut ||= TimeOut.udp_default
+  def associate_udp_timeout
+    @associateUDPTimeOut ||= TimeOut.udp_default
   end
 
   def local_address : Socket::Address?
@@ -287,14 +287,14 @@ class SOCKS::Client < IO
     in .tcp_connection?
     in .tcp_binding?
       bind_outbound_socket = SOCKS.create_outbound_socket command_type: command_type, destination_address: from_establish_destination_address,
-        dns_resolver: dnsResolver, tcp_timeout: establish_tcp_bind_timeout, udp_timeout: establish_udp_bind_timeout
+        dns_resolver: dnsResolver, tcp_timeout: tcp_binding_timeout, udp_timeout: associate_udp_timeout
 
       _outbound = outbound
       @outbound = bind_outbound_socket
       @holding = _outbound
     in .associate_udp?
       bind_outbound_socket = SOCKS.create_outbound_socket command_type: command_type, destination_address: from_establish_destination_address,
-        dns_resolver: dnsResolver, tcp_timeout: establish_tcp_bind_timeout, udp_timeout: establish_tcp_bind_timeout
+        dns_resolver: dnsResolver, tcp_timeout: tcp_binding_timeout, udp_timeout: tcp_binding_timeout
 
       unless bind_outbound_socket.is_a? UDPSocket
         bind_outbound_socket.close rescue nil

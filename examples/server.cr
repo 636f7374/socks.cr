@@ -18,10 +18,10 @@ options.server.allowWebSocketKeepAlive = true
 tcp_server = TCPServer.new host: "0.0.0.0", port: 1234_i32
 server = SOCKS::Server.new io: tcp_server, dnsResolver: dns_resolver, options: options
 
-server.establish_tcp_outbound_timeout = SOCKS::TimeOut.new
-server.establish_udp_outbound_timeout = SOCKS::TimeOut.udp_default
-server.establish_tcp_bind_timeout = SOCKS::TimeOut.new
-server.establish_udp_bind_timeout = SOCKS::TimeOut.udp_default
+server.tcp_outbound_timeout = SOCKS::TimeOut.new
+server.udp_outbound_timeout = SOCKS::TimeOut.udp_default
+server.tcp_binding_timeout = SOCKS::TimeOut.new
+server.associate_udp_timeout = SOCKS::TimeOut.udp_default
 server.client_timeout = SOCKS::TimeOut.new
 
 # You can set `SOCKS::Server.authentication`, such as (`UserNamePassword` and SOCKS::Server.on_auth).

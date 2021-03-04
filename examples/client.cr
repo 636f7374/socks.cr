@@ -15,7 +15,14 @@ dns_resolver = DNS::Resolver.new dns_servers
 # After finishing the job, you can call `SOCKS::Client.notify_keep_alive!` to reuse the pipeline.
 # So much until it's done.
 
-client = SOCKS::Client.new host: "0.0.0.0", port: 1234_i32, dns_resolver: dns_resolver
+client = SOCKS::Client.new host: "0.0.0.0", port: 1234_i32, dns_resolver: dns_resolver, timeout: SOCKS::TimeOut.new
+
+# Set TCPBinding and AssociateUDP timeout.
+
+client.tcp_binding_timeout = SOCKS::TimeOut.new
+client.associate_udp_timeout = SOCKS::TimeOut.udp_default
+
+# Set authentication method.
 
 client.authentication_methods = [SOCKS::Frames::AuthenticationFlag::UserNamePassword]
 authenticate_frame = SOCKS::Frames::Authenticate.new version: SOCKS::Frames::VersionFlag::V5, arType: SOCKS::ARType::Ask
