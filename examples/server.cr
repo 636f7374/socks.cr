@@ -6,7 +6,7 @@ require "../src/socks.cr"
 dns_servers = Set(DNS::Address).new
 dns_servers << DNS::Address.new ipAddress: Socket::IPAddress.new("8.8.8.8", 53_i32), protocolType: DNS::ProtocolType::UDP
 dns_servers << DNS::Address.new ipAddress: Socket::IPAddress.new("8.8.4.4", 853_i32), protocolType: DNS::ProtocolType::TLS
-dns_resolver = DNS::Resolver.new dns_servers
+dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 
 # `SOCKS::Server::Options`, adjust the server policy, such as whether to allow WebSocketKeepAlive.
 # Finally, you call `SOCKS::SessionProcessor.perform` to automatically process.
@@ -14,6 +14,7 @@ dns_resolver = DNS::Resolver.new dns_servers
 
 options = SOCKS::Options.new
 options.server.allowWebSocketKeepAlive = true
+options.wrapper = SOCKS::Options::Wrapper::WebSocket.new
 
 tcp_server = TCPServer.new host: "0.0.0.0", port: 1234_i32
 server = SOCKS::Server.new io: tcp_server, dnsResolver: dns_resolver, options: options

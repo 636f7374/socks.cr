@@ -1,8 +1,9 @@
 struct SOCKS::Options
   property session : Session
   property server : Server
+  property wrapper : Wrapper?
 
-  def initialize(@session : Session = Session.new, @server : Server = Server.new)
+  def initialize(@session : Session = Session.new, @server : Server = Server.new, @wrapper : Wrapper? = nil)
   end
 
   struct Session
@@ -38,6 +39,11 @@ struct SOCKS::Options
         @addresses = Set(Address).new
         @ipAddresses = Set(Socket::IPAddress).new
       end
+    end
+  end
+
+  abstract struct Wrapper
+    struct WebSocket < Wrapper
     end
   end
 end
