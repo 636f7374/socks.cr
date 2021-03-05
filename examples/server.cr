@@ -3,9 +3,9 @@ require "../src/socks.cr"
 # Use `DNS.getaddrinfo` instead of `C.getaddrinfo`, fast and stable DNS resolver.
 # DNS.cr will send and receive DNS requests in concurrent.
 
-dns_servers = Set(DNS::Resolver::Address).new
-dns_servers << DNS::Resolver::Address.new ipAddress: Socket::IPAddress.new("8.8.8.8", 53_i32), protocolType: DNS::ProtocolType::UDP
-dns_servers << DNS::Resolver::Address.new ipAddress: Socket::IPAddress.new("8.8.4.4", 853_i32), protocolType: DNS::ProtocolType::TLS
+dns_servers = Set(DNS::Address).new
+dns_servers << DNS::Address.new ipAddress: Socket::IPAddress.new("8.8.8.8", 53_i32), protocolType: DNS::ProtocolType::UDP
+dns_servers << DNS::Address.new ipAddress: Socket::IPAddress.new("8.8.4.4", 853_i32), protocolType: DNS::ProtocolType::TLS
 dns_resolver = DNS::Resolver.new dns_servers
 
 # `SOCKS::Server::Options`, adjust the server policy, such as whether to allow WebSocketKeepAlive.
