@@ -68,7 +68,7 @@ class SOCKS::Session < IO
     @inbound = Enhanced::WebSocket.new io: protocol, options: options
   end
 
-  def process_upgrade
+  def process_upgrade!
     _wrapper = options.wrapper
 
     case _wrapper

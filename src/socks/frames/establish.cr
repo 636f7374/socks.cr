@@ -77,14 +77,8 @@ struct SOCKS::Frames
 
       case destination_address
       in Socket::IPAddress
-        case destination_address.family
-        when .inet6?
-          memory.write Socket::IPAddress.ipv6_to_bytes! destination_address
-          memory.write_bytes destination_address.port.to_u16, IO::ByteFormat::BigEndian
-        when .inet?
-          memory.write Socket::IPAddress.ipv4_to_bytes! destination_address
-          memory.write_bytes destination_address.port.to_u16, IO::ByteFormat::BigEndian
-        end
+        memory.write destination_address.to_slice
+        memory.write_bytes destination_address.port.to_u16, IO::ByteFormat::BigEndian
       in Address
         memory.write Bytes[destination_address.host.size.to_u8]
         memory.write destination_address.host.to_slice
@@ -126,14 +120,8 @@ struct SOCKS::Frames
 
       case destination_address
       in Socket::IPAddress
-        case destination_address.family
-        when .inet6?
-          memory.write Socket::IPAddress.ipv6_to_bytes! destination_address
-          memory.write_bytes destination_address.port.to_u16, IO::ByteFormat::BigEndian
-        when .inet?
-          memory.write Socket::IPAddress.ipv4_to_bytes! destination_address
-          memory.write_bytes destination_address.port.to_u16, IO::ByteFormat::BigEndian
-        end
+        memory.write destination_address.to_slice
+        memory.write_bytes destination_address.port.to_u16, IO::ByteFormat::BigEndian
       in Address
         memory.write Bytes[destination_address.host.size.to_u8]
         memory.write destination_address.host.to_slice

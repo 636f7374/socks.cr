@@ -44,7 +44,7 @@ loop do
 
   spawn do
     begin
-      _session.upgrade_websocket
+      _session.process_upgrade!
       server.handshake! _session
       server.establish! _session
     rescue ex

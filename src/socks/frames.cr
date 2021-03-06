@@ -103,12 +103,12 @@ abstract struct SOCKS::Frames
   def self.read_ip_address!(io : IO, address_flag : AddressFlag) : Socket::IPAddress
     case address_flag
     when .ipv6?
-      ip_address = Socket::IPAddress.ipv6_from_io io
+      ip_address = Socket::IPAddress.from_io io: io, family: Socket::Family::INET6
       port = io.read_bytes UInt16, IO::ByteFormat::BigEndian
 
       Socket::IPAddress.new ip_address.address, port.to_i32
     when .ipv4?
-      ip_address = Socket::IPAddress.ipv4_from_io io
+      ip_address = Socket::IPAddress.from_io io: io, family: Socket::Family::INET
       port = io.read_bytes UInt16, IO::ByteFormat::BigEndian
 
       Socket::IPAddress.new ip_address.address, port.to_i32
