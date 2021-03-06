@@ -154,7 +154,7 @@ class SOCKS::Server
     raise Exception.new "Server.handshake: Unsupported authentication method or client authentication method is inconsistent with the authentication method preset by the server"
   end
 
-  def establish!(session : Session, sync_create_outbound_socket : Bool = true) : Bool
+  def establish!(session : Session, start_immediately : Bool = true, sync_create_outbound_socket : Bool = true) : Tuple(Frames::Establish, Frames::CommandFlag, Address | Socket::IPAddress)
     from_establish = Frames::Establish.from_io io: session, ar_type: ARType::Ask, version_flag: version
     session.exchangeFrames << from_establish
     raise Exception.new "Server.establish!: Establish.commandType cannot be Nil!" unless command_type = from_establish.commandType
@@ -167,6 +167,12 @@ class SOCKS::Server
       raise ex
     end
 
+    return Tuple.new from_establish, command_type, destination_address unless start_immediately
+    establish! session: session, from_establish: from_establish, command_type: command_type, destination_address: destination_address, sync_create_outbound_socket: sync_create_outbound_socket
+    return Tuple.new from_establish, command_type, destination_address
+  end
+
+  def establish!(session : Session, from_establish : Frames::Establish, command_type : Frames::CommandFlag, destination_address : Address | Socket::IPAddress, sync_create_outbound_socket : Bool = true) : Bool
     # Check if Options::Server accept TCPBinding or AssociateUDP
 
     case command_type

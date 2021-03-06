@@ -90,10 +90,10 @@ struct SOCKS::Frames
       in Socket::IPAddress
         case destination_address.family
         when .inet6?
-          memory.write Socket::IPAddress.ipv6_to_bytes! destination_address
+          memory.write Socket::IPAddress.to_slice
           memory.write_bytes destination_address.port.to_u16, IO::ByteFormat::BigEndian
         when .inet?
-          memory.write Socket::IPAddress.ipv4_to_bytes! destination_address
+          memory.write Socket::IPAddress.to_slice
           memory.write_bytes destination_address.port.to_u16, IO::ByteFormat::BigEndian
         end
       in Address

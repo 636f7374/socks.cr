@@ -61,10 +61,21 @@ class SOCKS::Session < IO
     inbound.closed?
   end
 
-  def upgrade_websocket
+  private def upgrade_websocket!
     HTTP::WebSocket.accept inbound
 
     protocol = HTTP::WebSocket::Protocol.new io: inbound
     @inbound = Enhanced::WebSocket.new io: protocol, options: options
+  end
+
+  def process_upgrade
+    _wrapper = options.wrapper
+
+    case _wrapper
+    in Options::Wrapper::WebSocket
+      upgrade_websocket!
+    in SOCKS::Options::Wrapper
+    in Nil
+    end
   end
 end
