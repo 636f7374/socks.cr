@@ -8,6 +8,11 @@ dns_servers << DNS::Address.new ipAddress: Socket::IPAddress.new("8.8.8.8", 53_i
 dns_servers << DNS::Address.new ipAddress: Socket::IPAddress.new("8.8.4.4", 853_i32), protocolType: DNS::ProtocolType::TLS
 dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 
+# Create SOCKS::Options.
+
+options = SOCKS::Options.new
+options.client.wrapper = SOCKS::Options::Client::Wrapper::WebSocket.new address: SOCKS::Address.new(host: "0.0.0.0", port: 1234_i32), path: "/"
+
 # `SOCKS::Client.new` will create a socket connected to the destination address.
 # Then you can add Authentication Methods, such as `UserNamePassword`.
 # If you want to use websocket as a destination wrapper, you need to call upgrade_websocket.
@@ -15,7 +20,7 @@ dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 # After finishing the job, you can call `SOCKS::Client.notify_keep_alive!` to reuse the pipeline.
 # So much until it's done.
 
-client = SOCKS::Client.new host: "0.0.0.0", port: 1234_i32, dns_resolver: dns_resolver, timeout: SOCKS::TimeOut.new
+client = SOCKS::Client.new host: "0.0.0.0", port: 1234_i32, dns_resolver: dns_resolver, options: options, timeout: SOCKS::TimeOut.new
 
 # Set TCPBinding and AssociateUDP timeout.
 
@@ -33,7 +38,7 @@ client.authenticate_frame = authenticate_frame
 
 begin
   # Upgrade outbound to WebSocket, and handshake.
-  client.upgrade_websocket host: "0.0.0.0", port: 1234_i32, path: "/"
+  client.process_upgrade!
   client.handshake!
 
   # Establish a TCPConnection to example.com through outbound.

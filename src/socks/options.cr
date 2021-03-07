@@ -15,6 +15,11 @@ struct SOCKS::Options
 
     abstract struct Wrapper
       struct WebSocket < Wrapper
+        property address : Address
+        property path : String
+
+        def initialize(@address : Address, @path : String)
+        end
       end
     end
   end

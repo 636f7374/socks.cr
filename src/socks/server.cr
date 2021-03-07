@@ -269,7 +269,7 @@ class SOCKS::Server
 
       # Because TCPBinding equal TCPServer.accept, so let's try to accept.
 
-      if command_type.associate_udp?
+      if command_type.associate_udp? && sync_create_outbound_socket
         _outbound = outbound_socket
         raise Exception.new "Server.establish!: Server.create_bind_socket (AssociateUDP) type is not Quirks::Server::AssociateUDP." unless _outbound.is_a? UDPSocket
         session.outbound = Quirks::Server::UDPOutbound.new io: _outbound, timeout: udp_outbound_timeout

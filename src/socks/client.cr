@@ -1,29 +1,31 @@
 class SOCKS::Client < IO
-  property outbound : IO
-  property holding : IO?
+  getter outbound : IO
   getter dnsResolver : DNS::Resolver
+  getter options : Options
+  property holding : IO?
   property exchangeFrames : Set(Frames)
 
-  def initialize(@outbound : IO, @dnsResolver : DNS::Resolver)
+  def initialize(@outbound : IO, @dnsResolver : DNS::Resolver, @options : Options)
+    @holding = nil
     @exchangeFrames = Set(Frames).new
   end
 
-  def self.new(host : String, port : Int32, dns_resolver : DNS::Resolver, timeout : TimeOut = TimeOut.new)
+  def self.new(host : String, port : Int32, dns_resolver : DNS::Resolver, options : Options, timeout : TimeOut = TimeOut.new)
     socket = TCPSocket.new host: host, port: port, dns_resolver: dns_resolver, connect_timeout: timeout.connect
 
     socket.read_timeout = timeout.read
     socket.write_timeout = timeout.write
 
-    new socket, dns_resolver
+    new outbound: socket, dnsResolver: dns_resolver, options: options
   end
 
-  def self.new(ip_address : Socket::IPAddress, dns_resolver : DNS::Resolver, timeout : TimeOut = TimeOut.new)
+  def self.new(ip_address : Socket::IPAddress, dns_resolver : DNS::Resolver, options : Options, timeout : TimeOut = TimeOut.new)
     socket = TCPSocket.new ip_address: ip_address, connect_timeout: timeout.connect
 
     socket.read_timeout = timeout.read
     socket.write_timeout = timeout.write
 
-    new socket, dns_resolver
+    new outbound: socket, dnsResolver: dns_resolver, options: options
   end
 
   def version=(value : Frames::VersionFlag)
@@ -94,6 +96,10 @@ class SOCKS::Client < IO
     @associateUDPTimeOut ||= TimeOut.udp_default
   end
 
+  def outbound : IO
+    @outbound
+  end
+
   def local_address : Socket::Address?
     _io = outbound
     _io.responds_to?(:local_address) ? _io.local_address : nil
@@ -127,7 +133,18 @@ class SOCKS::Client < IO
     outbound.closed?
   end
 
-  def upgrade_websocket(host : String, port : Int32, path : String = "/", headers : HTTP::Headers = HTTP::Headers.new)
+  def process_upgrade!
+    _wrapper = options.client.wrapper
+
+    case _wrapper
+    in SOCKS::Options::Client::Wrapper::WebSocket
+      upgrade_websocket! host: _wrapper.address.host, port: _wrapper.address.port, path: _wrapper.path
+    in SOCKS::Options::Client::Wrapper
+    in Nil
+    end
+  end
+
+  private def upgrade_websocket!(host : String, port : Int32, path : String = "/", headers : HTTP::Headers = HTTP::Headers.new)
     protocol = HTTP::WebSocket.handshake socket: outbound, host: host, port: port, path: path, headers: headers
     @outbound = Enhanced::WebSocket.new io: protocol
   end
@@ -243,7 +260,12 @@ class SOCKS::Client < IO
   def establish!(command_type : Frames::CommandFlag, destination_address : Socket::IPAddress | Address, remote_dns_resolution : Bool = true)
     # Send Establish Ask.
 
-    SOCKS.to_ip_address(destination_address.host, destination_address.port).try { |ip_address| destination_address = ip_address }
+    case destination_address
+    in Socket::IPAddress
+    in Address
+      SOCKS.to_ip_address(destination_address.host, destination_address.port).try { |ip_address| destination_address = ip_address }
+    end
+
     frame_establish = Frames::Establish.new version: version, arType: ARType::Ask
     frame_establish.commandType = command_type
 
