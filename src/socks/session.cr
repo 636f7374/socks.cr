@@ -69,12 +69,12 @@ class SOCKS::Session < IO
   end
 
   def process_upgrade!
-    _wrapper = options.wrapper
+    _wrapper = options.server.wrapper
 
     case _wrapper
-    in Options::Wrapper::WebSocket
+    in Options::Server::Wrapper::WebSocket
       upgrade_websocket!
-    in SOCKS::Options::Wrapper
+    in SOCKS::Options::Server::Wrapper
     in Nil
     end
   end

@@ -182,8 +182,6 @@ class Transport
 
     mixed_fiber = spawn do
       loop do
-        break if aliveInterval <= (Time.local - latest_alive_time)
-
         _sent_size = sentSize.get
         _received_size = receivedSize.get
 

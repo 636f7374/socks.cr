@@ -14,7 +14,7 @@ dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 
 options = SOCKS::Options.new
 options.server.allowWebSocketKeepAlive = true
-options.wrapper = SOCKS::Options::Wrapper::WebSocket.new
+options.server.wrapper = SOCKS::Options::Server::Wrapper::WebSocket.new
 
 tcp_server = TCPServer.new host: "0.0.0.0", port: 1234_i32
 server = SOCKS::Server.new io: tcp_server, dnsResolver: dns_resolver, options: options

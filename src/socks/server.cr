@@ -168,11 +168,14 @@ class SOCKS::Server
     end
 
     return Tuple.new from_establish, command_type, destination_address unless start_immediately
-    establish! session: session, from_establish: from_establish, command_type: command_type, destination_address: destination_address, sync_create_outbound_socket: sync_create_outbound_socket
+    establish! session: session, from_establish: from_establish, sync_create_outbound_socket: sync_create_outbound_socket
     return Tuple.new from_establish, command_type, destination_address
   end
 
-  def establish!(session : Session, from_establish : Frames::Establish, command_type : Frames::CommandFlag, destination_address : Address | Socket::IPAddress, sync_create_outbound_socket : Bool = true) : Bool
+  def establish!(session : Session, from_establish : Frames::Establish, sync_create_outbound_socket : Bool = true) : Bool
+    raise Exception.new "Server.establish!: Establish.commandType cannot be Nil!" unless command_type = from_establish.commandType
+    raise Exception.new "Server.establish!: Establish.destinationAddress or destinationIpAddress cannot be Nil!" unless destination_address = from_establish.get_destination_address
+
     # Check if Options::Server accept TCPBinding or AssociateUDP
 
     case command_type
@@ -410,7 +413,7 @@ class SOCKS::Server
     true
   end
 
-  private def send_establish_frame(session : Session, status_flag : Frames::StatusFlag, destination_ip_address : Nil) : Bool
+  def send_establish_frame(session : Session, status_flag : Frames::StatusFlag, destination_ip_address : Nil) : Bool
     frame_establish = Frames::Establish.new version: version, arType: ARType::Reply
     frame_establish.statusType = status_flag
 
