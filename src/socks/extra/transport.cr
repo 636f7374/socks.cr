@@ -127,6 +127,21 @@ class Transport
     destination_tls_context.try &.free
   end
 
+  def reset! : Bool
+    return false unless finished?
+
+    @concurrentMutex.synchronize do
+      @latestAliveTime = Time.local
+      @sentSize = Atomic(Int64).new -1_i64
+      @receivedSize = Atomic(Int64).new -1_i64
+      @extraSentSize = 0_i32
+      @extraReceivedSize = 0_i32
+      @concurrentFibers.clear
+    end
+
+    true
+  end
+
   def perform
     self.latest_alive_time = Time.local
 

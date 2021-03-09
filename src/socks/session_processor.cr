@@ -1,9 +1,7 @@
 class SOCKS::SessionProcessor
   property session : Session
-  property closed : Bool?
 
   def initialize(@session : Session)
-    @closed = nil
   end
 
   private def keep_alive=(value : Bool?)
@@ -48,7 +46,11 @@ class SOCKS::SessionProcessor
 
   def perform(server : Server)
     return session.close unless outbound = session.outbound
-    perform outbound: outbound
+
+    transport = Transport.new source: session, destination: outbound, heartbeat: heartbeat_proc
+    set_transport_options transport: transport
+    perform outbound: outbound, transport: transport
+    transport.reset!
 
     loop do
       break unless session.options.server.allowWebSocketKeepAlive
@@ -70,15 +72,13 @@ class SOCKS::SessionProcessor
         break
       end
 
-      perform outbound: outbound
+      perform outbound: outbound, transport: transport
+      transport.reset!
     end
   end
 
-  private def perform(outbound : IO)
+  private def perform(outbound : IO, transport : Transport)
     self.keep_alive = nil
-
-    transport = Transport.new source: session, destination: outbound, heartbeat: heartbeat_proc
-    set_transport_options transport: transport
     transport.perform
 
     loop do
@@ -219,14 +219,5 @@ class SOCKS::SessionProcessor
       _session_holding = session.holding
       _session_holding.ping if _session_holding.is_a? Enhanced::WebSocket
     end
-  end
-
-  def close
-    session.close rescue nil
-    @closed = true
-  end
-
-  def closed?
-    @closed
   end
 end
