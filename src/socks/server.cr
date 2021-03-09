@@ -296,6 +296,13 @@ class SOCKS::Server
 
     case destination_address
     in Address
+      to_ip_address = Socket::IPAddress.new address: destination_address.host, port: destination_address.port rescue nil
+      destination_address = to_ip_address if to_ip_address
+    in Socket::IPAddress
+    end
+
+    case destination_address
+    in Address
       raise Exception.new "Server.check_destination_protection!: Establish.destinationAddress is in your preset destinationProtection!" if destination_protection.addresses.includes? destination_address
     in Socket::IPAddress
       server_local_address = io.local_address

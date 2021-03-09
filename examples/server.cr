@@ -53,12 +53,6 @@ loop do
       next
     end
 
-    unless outbound = _session.outbound
-      _session.close rescue nil
-
-      next
-    end
-
     processor = SOCKS::SessionProcessor.new session: session
     processor.perform server: server
   end

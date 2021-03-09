@@ -14,6 +14,38 @@ class SOCKS::SessionProcessor
     @keepAlive
   end
 
+  def source_tls_context=(value : OpenSSL::SSL::Context::Server)
+    @sourceTlsContext = value
+  end
+
+  def source_tls_context
+    @sourceTlsContext
+  end
+
+  def source_tls_socket=(value : OpenSSL::SSL::Socket::Server)
+    @sourceTlsSocket = value
+  end
+
+  def source_tls_socket
+    @sourceTlsSocket
+  end
+
+  def destination_tls_context=(value : OpenSSL::SSL::Context::Client)
+    @destinationTlsContext = value
+  end
+
+  def destination_tls_context
+    @destinationTlsContext
+  end
+
+  def destination_tls_socket=(value : OpenSSL::SSL::Socket::Client)
+    @destinationTlsSocket = value
+  end
+
+  def destination_tls_socket
+    @destinationTlsSocket
+  end
+
   def perform(server : Server)
     return session.close unless outbound = session.outbound
     perform outbound: outbound
@@ -65,20 +97,24 @@ class SOCKS::SessionProcessor
   end
 
   private def set_transport_options(transport : Transport)
-    if transport.destination.is_a? Quirks::Server::UDPOutbound
-      transport.aliveInterval = session.options.session.udpAliveInterval
-    else
-      transport.aliveInterval = session.options.session.aliveInterval
-    end
-
     transport.heartbeatInterval = session.options.session.heartbeatInterval
+    transport.aliveInterval = session.options.session.aliveInterval
+
+    _destination_tls_socket = destination_tls_socket
+    transport.destination_tls_socket = _destination_tls_socket if _destination_tls_socket
+    _destination_tls_context = destination_tls_context
+    transport.destination_tls_context = _destination_tls_context if _destination_tls_context
+    _source_tls_socket = source_tls_socket
+    transport.source_tls_socket = _source_tls_socket if _source_tls_socket
+    _source_tls_context = source_tls_context
+    transport.source_tls_context = _source_tls_context if _source_tls_context
+
+    return unless transport.destination.is_a? Quirks::Server::UDPOutbound
+    transport.aliveInterval = session.options.session.udpAliveInterval
   end
 
   private def check_support_keep_alive? : Bool
-    _session_inbound = session.inbound
-    _session_holding = session.holding
-
-    _session_inbound.is_a?(Enhanced::WebSocket) || _session_holding.is_a?(Enhanced::WebSocket)
+    session.inbound.is_a?(Enhanced::WebSocket) || session.holding.is_a?(Enhanced::WebSocket)
   end
 
   private def check_inbound_keep_alive(transport : Transport) : Bool
