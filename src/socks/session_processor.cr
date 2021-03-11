@@ -12,44 +12,13 @@ class SOCKS::SessionProcessor
     @keepAlive
   end
 
-  def source_tls_context=(value : OpenSSL::SSL::Context::Server)
-    @sourceTlsContext = value
-  end
-
-  def source_tls_context
-    @sourceTlsContext
-  end
-
-  def source_tls_socket=(value : OpenSSL::SSL::Socket::Server)
-    @sourceTlsSocket = value
-  end
-
-  def source_tls_socket
-    @sourceTlsSocket
-  end
-
-  def destination_tls_context=(value : OpenSSL::SSL::Context::Client)
-    @destinationTlsContext = value
-  end
-
-  def destination_tls_context
-    @destinationTlsContext
-  end
-
-  def destination_tls_socket=(value : OpenSSL::SSL::Socket::Client)
-    @destinationTlsSocket = value
-  end
-
-  def destination_tls_socket
-    @destinationTlsSocket
-  end
-
   def perform(server : Server)
-    return session.close unless outbound = session.outbound
+    return session.cleanup unless outbound = session.outbound
 
     transport = Transport.new source: session, destination: outbound, heartbeat: heartbeat_proc
     set_transport_options transport: transport
-    perform outbound: outbound, transport: transport
+    session.set_transport_tls transport: transport
+    perform transport: transport
     transport.reset!
 
     loop do
@@ -61,23 +30,24 @@ class SOCKS::SessionProcessor
       begin
         server.establish! session
       rescue ex
-        session.close rescue nil
+        session.cleanup rescue nil
 
         break
       end
 
       unless outbound = session.outbound
-        session.close rescue nil
+        session.cleanup rescue nil
 
         break
       end
 
-      perform outbound: outbound, transport: transport
+      transport.destination = outbound
+      perform transport: transport
       transport.reset!
     end
   end
 
-  private def perform(outbound : IO, transport : Transport)
+  private def perform(transport : Transport)
     self.keep_alive = nil
     transport.perform
 
@@ -96,18 +66,34 @@ class SOCKS::SessionProcessor
     end
   end
 
+  def perform(outbound : IO, keepalive_pool : KeepAlivePool)
+    transport = Transport.new source: session, destination: outbound, heartbeat: heartbeat_proc
+    session.set_transport_tls transport: transport
+    perform transport: transport, keepalive_pool: keepalive_pool
+  end
+
+  def perform(transport : Transport, keepalive_pool : KeepAlivePool)
+    set_transport_options transport: transport
+    self.keep_alive = nil
+    transport.perform
+
+    loop do
+      break if check_outbound_keep_alive transport: transport, keepalive_pool: keepalive_pool
+
+      if transport.done?
+        transport.cleanup
+        self.keep_alive = false
+
+        break
+      end
+
+      next sleep 0.25_f32.seconds
+    end
+  end
+
   private def set_transport_options(transport : Transport)
     transport.heartbeatInterval = session.options.session.heartbeatInterval
     transport.aliveInterval = session.options.session.aliveInterval
-
-    _destination_tls_socket = destination_tls_socket
-    transport.destination_tls_socket = _destination_tls_socket if _destination_tls_socket
-    _destination_tls_context = destination_tls_context
-    transport.destination_tls_context = _destination_tls_context if _destination_tls_context
-    _source_tls_socket = source_tls_socket
-    transport.source_tls_socket = _source_tls_socket if _source_tls_socket
-    _source_tls_context = source_tls_context
-    transport.source_tls_context = _source_tls_context if _source_tls_context
 
     return unless transport.destination.is_a? Quirks::Server::UDPOutbound
     transport.aliveInterval = session.options.session.udpAliveInterval
@@ -139,8 +125,8 @@ class SOCKS::SessionProcessor
 
         begin
           _session_inbound.ping Enhanced::WebSocket::EnhancedPing::KeepAlive
-          event = _session_inbound.receive_pong_event!
-          raise Exception.new String.build { |io| io << "Received from IO to failure status (" << event.to_s << ")." } unless event.confirmed?
+          received = _session_inbound.receive_pong_event!
+          raise Exception.new String.build { |io| io << "SessionProcessor.check_inbound_keep_alive: Received from IO to failure status (" << received << ")." } unless received.confirmed?
         rescue ex
           transport.cleanup
 
@@ -187,8 +173,8 @@ class SOCKS::SessionProcessor
 
       begin
         _session_holding.ping Enhanced::WebSocket::EnhancedPing::KeepAlive
-        event = _session_holding.receive_pong_event!
-        raise Exception.new String.build { |io| io << "Received from IO to failure status (" << event.to_s << ")." } unless event.confirmed?
+        received = _session_holding.receive_pong_event!
+        raise Exception.new String.build { |io| io << "SessionProcessor.check_holding_keep_alive: Received from IO to failure status (" << received << ")." } unless received.confirmed?
       rescue ex
         transport.cleanup
 
@@ -211,13 +197,73 @@ class SOCKS::SessionProcessor
     end
   end
 
+  private def check_outbound_keep_alive(transport : Transport, keepalive_pool : KeepAlivePool) : Bool
+    transport_destination = transport.destination
+    return false unless transport_destination.is_a? Client
+    enhanced_websocket = transport_destination.outbound
+    return false unless enhanced_websocket.is_a? Enhanced::WebSocket
+
+    loop do
+      next sleep 0.25_f32.seconds unless transport.sent_done?
+      enhanced_websocket.ping SOCKS::Enhanced::WebSocket::EnhancedPing::KeepAlive rescue nil
+
+      break
+    end
+
+    loop do
+      next sleep 0.25_f32.seconds unless transport.finished?
+
+      unless enhanced_websocket.keep_alive?
+        transport.cleanup
+
+        self.keep_alive = false
+        enhanced_websocket.keep_alive = nil
+
+        return true
+      end
+
+      begin
+        received = enhanced_websocket.receive_ping_event!
+        raise Exception.new String.build { |io| io << "SessionProcessor.check_outbound_keep_alive: Received from IO to failure status (" << received << ")." } unless received.keep_alive?
+        enhanced_websocket.pong event: SOCKS::Enhanced::WebSocket::EnhancedPong::Confirmed
+      rescue ex
+        transport.cleanup
+
+        self.keep_alive = false
+        enhanced_websocket.keep_alive = nil
+
+        return true
+      end
+
+      transport.cleanup side: Transport::Side::Source, free_tls: true
+      transport.reset!
+
+      session.holding.try &.close rescue nil
+      session.holding = nil
+      transport_destination.holding.try &.close rescue nil
+      transport_destination.holding = nil
+
+      self.keep_alive = true
+      enhanced_websocket.keep_alive = nil
+      keepalive_pool.unshift value: transport
+
+      return true
+    end
+  end
+
   private def heartbeat_proc : Proc(Nil)?
     ->do
       _session_inbound = session.inbound
-      _session_inbound.ping if _session_inbound.is_a? Enhanced::WebSocket
+      _session_inbound.ping rescue nil if _session_inbound.is_a? Enhanced::WebSocket
 
       _session_holding = session.holding
-      _session_holding.ping if _session_holding.is_a? Enhanced::WebSocket
+      _session_holding.ping rescue nil if _session_holding.is_a? Enhanced::WebSocket
+
+      _session_outbound = session.outbound
+      return unless _session_outbound.is_a? Client
+      enhanced_websocket = _session_outbound.outbound
+      return unless enhanced_websocket.is_a? Enhanced::WebSocket
+      enhanced_websocket.ping rescue nil
     end
   end
 end

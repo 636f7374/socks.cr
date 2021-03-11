@@ -93,7 +93,22 @@ module SOCKS::Enhanced
           case _enhanced_ping
           in .keep_alive?
             process_enhanced_ping! _enhanced_ping
-            raise Exception.new String.build { |io| io << "Receive KeepAlive permission (" << _enhanced_ping.to_s << ")." }
+            raise Exception.new String.build { |io| io << "Received from IO to KeepAlive Ping permissionType (" << _enhanced_ping << ")." }
+          end
+        when .pong?
+          slice = receive_buffer.to_slice[0_i32, receive.size]
+          next unless 1_i32 == slice.size
+
+          enhanced_pong = EnhancedPong.from_value slice.first rescue nil
+          next unless _enhanced_pong = enhanced_pong
+
+          case _enhanced_pong
+          in .confirmed?
+            process_enhanced_pong! _enhanced_pong
+            raise Exception.new String.build { |io| io << "Received from IO to KeepAlive Pong permissionType (" << _enhanced_pong << ")." }
+          in .refused?
+            process_enhanced_pong! _enhanced_pong
+            raise Exception.new String.build { |io| io << "Received from IO to KeepAlive Pong permissionType (" << _enhanced_pong << ")." }
           end
         end
       end
@@ -115,6 +130,23 @@ module SOCKS::Enhanced
 
           self.keep_alive = false
         end
+      end
+    end
+
+    def process_enhanced_pong!(enhanced_pong : EnhancedPong? = nil)
+      event = enhanced_pong || receive_pong_event!
+
+      case event
+      in .confirmed?
+        allow_keep_alive = options.try &.server.try &.allowWebSocketKeepAlive
+
+        if allow_keep_alive
+          self.keep_alive = true
+        else
+          self.keep_alive = false
+        end
+      in .refused?
+        self.keep_alive = false
       end
     end
 

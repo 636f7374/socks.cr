@@ -38,14 +38,6 @@ class Transport
     @concurrentMutex.synchronize { @latestAliveTime }
   end
 
-  def source_tls_context=(value : OpenSSL::SSL::Context::Server)
-    @sourceTlsContext = value
-  end
-
-  def source_tls_context
-    @sourceTlsContext
-  end
-
   def source_tls_socket=(value : OpenSSL::SSL::Socket::Server)
     @sourceTlsSocket = value
   end
@@ -54,12 +46,12 @@ class Transport
     @sourceTlsSocket
   end
 
-  def destination_tls_context=(value : OpenSSL::SSL::Context::Client)
-    @destinationTlsContext = value
+  def source_tls_context=(value : OpenSSL::SSL::Context::Server)
+    @sourceTlsContext = value
   end
 
-  def destination_tls_context
-    @destinationTlsContext
+  def source_tls_context
+    @sourceTlsContext
   end
 
   def destination_tls_socket=(value : OpenSSL::SSL::Socket::Client)
@@ -68,6 +60,14 @@ class Transport
 
   def destination_tls_socket
     @destinationTlsSocket
+  end
+
+  def destination_tls_context=(value : OpenSSL::SSL::Context::Client)
+    @destinationTlsContext = value
+  end
+
+  def destination_tls_context
+    @destinationTlsContext
   end
 
   def finished?
@@ -79,6 +79,12 @@ class Transport
     received_done = 0_i64 <= receivedSize.get
 
     finished? || sent_done || received_done
+  end
+
+  def sent_done? : Bool
+    sent_done = 0_i64 <= sentSize.get
+
+    finished? || sent_done
   end
 
   def cleanup
@@ -216,6 +222,7 @@ class Transport
         end
 
         next sleep 0.25_f32.seconds unless heartbeat
+        next sleep 0.25_f32.seconds if (0_i64 <= _sent_size) || (0_i64 <= _received_size) || negative_two
         heartbeat.try &.call rescue nil
         sleep heartbeatInterval.seconds
       end

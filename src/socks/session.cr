@@ -1,12 +1,16 @@
 class SOCKS::Session < IO
   property inbound : IO
   getter options : Options
-  property exchangeFrames : Set(Frames)
   property outbound : IO?
   property holding : IO?
+  property exchangeFrames : Set(Frames)
+  property syncCloseOutbound : Bool
 
   def initialize(@inbound : IO, @options : Options)
+    @outbound = nil
+    @holding = nil
     @exchangeFrames = Set(Frames).new
+    @syncCloseOutbound = true
   end
 
   def read_timeout=(value : Int | Time::Span | Nil)
@@ -39,6 +43,38 @@ class SOCKS::Session < IO
     _io.responds_to?(:remote_address) ? _io.remote_address : nil
   end
 
+  def source_tls_socket=(value : OpenSSL::SSL::Socket::Server)
+    @sourceTlsSocket = value
+  end
+
+  def source_tls_socket
+    @sourceTlsSocket
+  end
+
+  def source_tls_context=(value : OpenSSL::SSL::Context::Server)
+    @sourceTlsContext = value
+  end
+
+  def source_tls_context
+    @sourceTlsContext
+  end
+
+  def destination_tls_socket=(value : OpenSSL::SSL::Socket::Client)
+    @destinationTlsSocket = value
+  end
+
+  def destination_tls_socket
+    @destinationTlsSocket
+  end
+
+  def destination_tls_context=(value : OpenSSL::SSL::Context::Client)
+    @destinationTlsContext = value
+  end
+
+  def destination_tls_context
+    @destinationTlsContext
+  end
+
   def read(slice : Bytes) : Int32
     return 0_i32 if slice.empty?
     inbound.read slice
@@ -51,10 +87,46 @@ class SOCKS::Session < IO
 
   def close
     inbound.close rescue nil
-    outbound.try &.close rescue nil
     holding.try &.close rescue nil
 
+    if syncCloseOutbound
+      outbound.try &.close rescue nil
+    end
+
     true
+  end
+
+  def cleanup : Bool
+    close
+    free_tls!
+
+    true
+  end
+
+  private def free_tls!
+    source_tls_socket.try &.skip_finalize = true
+    source_tls_socket.try &.free
+
+    source_tls_context.try &.skip_finalize = true
+    source_tls_context.try &.free
+
+    destination_tls_socket.try &.skip_finalize = true
+    destination_tls_socket.try &.free
+
+    destination_tls_context.try &.skip_finalize = true
+    destination_tls_context.try &.free
+  end
+
+  def set_transport_tls(transport : Transport)
+    _source_tls_socket = source_tls_socket
+    transport.source_tls_socket = _source_tls_socket if _source_tls_socket
+    _source_tls_context = source_tls_context
+    transport.source_tls_context = _source_tls_context if _source_tls_context
+
+    _destination_tls_socket = destination_tls_socket
+    transport.destination_tls_socket = _destination_tls_socket if _destination_tls_socket
+    _destination_tls_context = destination_tls_context
+    transport.destination_tls_context = _destination_tls_context if _destination_tls_context
   end
 
   def closed?
