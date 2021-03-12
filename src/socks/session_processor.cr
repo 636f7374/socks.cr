@@ -31,12 +31,14 @@ class SOCKS::SessionProcessor
         server.establish! session
       rescue ex
         session.cleanup rescue nil
+        session.reset reset_tls: true
 
         break
       end
 
       unless outbound = session.outbound
         session.cleanup rescue nil
+        session.reset reset_tls: true
 
         break
       end
@@ -57,8 +59,9 @@ class SOCKS::SessionProcessor
 
       if transport.done?
         transport.cleanup
-        self.keep_alive = false
+        session.reset reset_tls: true
 
+        self.keep_alive = false
         break
       end
 
@@ -82,8 +85,9 @@ class SOCKS::SessionProcessor
 
       if transport.done?
         transport.cleanup
-        self.keep_alive = false
+        session.reset reset_tls: true
 
+        self.keep_alive = false
         break
       end
 
@@ -116,6 +120,7 @@ class SOCKS::SessionProcessor
 
         unless _session_inbound.keep_alive?
           transport.cleanup
+          session.reset reset_tls: true
 
           self.keep_alive = false
           _session_inbound.keep_alive = nil
@@ -129,6 +134,7 @@ class SOCKS::SessionProcessor
           raise Exception.new String.build { |io| io << "SessionProcessor.check_inbound_keep_alive: Received from IO to failure status (" << received << ")." } unless received.confirmed?
         rescue ex
           transport.cleanup
+          session.reset reset_tls: true
 
           self.keep_alive = false
           _session_inbound.keep_alive = nil
@@ -136,7 +142,8 @@ class SOCKS::SessionProcessor
           return true
         end
 
-        transport.cleanup Transport::Side::Destination, free_tls: true
+        transport.cleanup side: Transport::Side::Destination, free_tls: true, reset: true
+        session.reset_peer side: Transport::Side::Destination, reset_tls: true
 
         self.keep_alive = true
         _session_inbound.keep_alive = nil
@@ -164,6 +171,7 @@ class SOCKS::SessionProcessor
 
       unless _session_holding.keep_alive?
         transport.cleanup
+        session.reset reset_tls: true
 
         self.keep_alive = false
         _session_holding.keep_alive = nil
@@ -177,6 +185,7 @@ class SOCKS::SessionProcessor
         raise Exception.new String.build { |io| io << "SessionProcessor.check_holding_keep_alive: Received from IO to failure status (" << received << ")." } unless received.confirmed?
       rescue ex
         transport.cleanup
+        session.reset reset_tls: true
 
         self.keep_alive = false
         _session_holding.keep_alive = nil
@@ -184,7 +193,8 @@ class SOCKS::SessionProcessor
         return true
       end
 
-      transport.cleanup Transport::Side::Destination, free_tls: true
+      transport.cleanup side: Transport::Side::Destination, free_tls: true, reset: true
+      session.reset_peer side: Transport::Side::Destination, reset_tls: true
 
       session.inbound.close rescue nil
       session.inbound = _session_holding
@@ -215,6 +225,7 @@ class SOCKS::SessionProcessor
 
       unless enhanced_websocket.keep_alive?
         transport.cleanup
+        session.reset reset_tls: true
 
         self.keep_alive = false
         enhanced_websocket.keep_alive = nil
@@ -228,6 +239,7 @@ class SOCKS::SessionProcessor
         enhanced_websocket.pong event: SOCKS::Enhanced::WebSocket::EnhancedPong::Confirmed
       rescue ex
         transport.cleanup
+        session.reset reset_tls: true
 
         self.keep_alive = false
         enhanced_websocket.keep_alive = nil
@@ -235,7 +247,8 @@ class SOCKS::SessionProcessor
         return true
       end
 
-      transport.cleanup side: Transport::Side::Source, free_tls: true
+      transport.cleanup side: Transport::Side::Source, free_tls: true, reset: true
+      session.reset_peer side: Transport::Side::Source, reset_tls: true
       transport.reset!
 
       session.holding.try &.close rescue nil

@@ -129,6 +129,44 @@ class SOCKS::Session < IO
     transport.destination_tls_context = _destination_tls_context if _destination_tls_context
   end
 
+  def reset(reset_tls : Bool)
+    closed_memory = IO::Memory.new 0_i32
+    closed_memory.close
+
+    @inbound = closed_memory
+    @holding = closed_memory
+    @outbound = closed_memory
+
+    if reset_tls
+      @sourceTlsSocket = nil
+      @sourceTlsContext = nil
+      @destinationTlsSocket = nil
+      @destinationTlsContext = nil
+    end
+  end
+
+  def reset_peer(side : Transport::Side, reset_tls : Bool)
+    closed_memory = IO::Memory.new 0_i32
+    closed_memory.close
+
+    case side
+    in .source?
+      @inbound = closed_memory
+
+      if reset_tls
+        @sourceTlsSocket = nil
+        @sourceTlsContext = nil
+      end
+    in .destination?
+      @outbound = closed_memory
+
+      if reset_tls
+        @destinationTlsSocket = nil
+        @destinationTlsContext = nil
+      end
+    end
+  end
+
   def closed?
     inbound.closed?
   end

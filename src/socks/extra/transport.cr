@@ -94,14 +94,17 @@ class Transport
     loop do
       next sleep 0.25_f32.seconds unless finished = self.finished?
 
-      free_source_tls
-      free_destination_tls
+      concurrentMutex.synchronize do
+        free_source_tls
+        free_destination_tls
+      end
 
+      reset_peer reset_tls: true
       break
     end
   end
 
-  def cleanup(side : Side, free_tls : Bool)
+  def cleanup(side : Side, free_tls : Bool, reset : Bool = true)
     case side
     in .source?
       source.close rescue nil
@@ -112,14 +115,58 @@ class Transport
     loop do
       next sleep 0.25_f32.seconds unless finished = self.finished?
 
-      case side
-      in .source?
-        free_source_tls
-      in .destination?
-        free_destination_tls
+      concurrentMutex.synchronize do
+        case side
+        in .source?
+          free_source_tls
+        in .destination?
+          free_destination_tls
+        end
       end
 
+      reset_peer side: side, reset_tls: free_tls if reset
       break
+    end
+  end
+
+  private def reset_peer(reset_tls : Bool)
+    @concurrentMutex.synchronize do
+      closed_memory = IO::Memory.new 0_i32
+      closed_memory.close
+
+      @source = closed_memory
+      @destination = closed_memory
+
+      if reset_tls
+        @sourceTlsSocket = nil
+        @sourceTlsContext = nil
+        @destinationTlsSocket = nil
+        @destinationTlsContext = nil
+      end
+    end
+  end
+
+  private def reset_peer(side : Side, reset_tls : Bool)
+    @concurrentMutex.synchronize do
+      closed_memory = IO::Memory.new 0_i32
+      closed_memory.close
+
+      case side
+      in .source?
+        @source = closed_memory
+
+        if reset_tls
+          @sourceTlsSocket = nil
+          @sourceTlsContext = nil
+        end
+      in .destination?
+        @destination = closed_memory
+
+        if reset_tls
+          @destinationTlsSocket = nil
+          @destinationTlsContext = nil
+        end
+      end
     end
   end
 
