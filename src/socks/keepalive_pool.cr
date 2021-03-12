@@ -5,7 +5,7 @@ class SOCKS::KeepAlivePool
   getter latestCleanedUp : Time
   getter mutex : Mutex
 
-  def initialize(@clearInterval : Time::Span = 15_i32.seconds, @capacity : Int32 = 10_i32)
+  def initialize(@clearInterval : Time::Span = 10_i32.seconds, @capacity : Int32 = 5_i32)
     @entries = Hash(UInt64, Entry).new
     @latestCleanedUp = Time.local
     @mutex = Mutex.new :unchecked

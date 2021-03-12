@@ -48,7 +48,7 @@ loop do
       server.handshake! _session
       server.establish! _session
     rescue ex
-      _session.close rescue nil
+      _session.cleanup rescue nil
 
       next
     end

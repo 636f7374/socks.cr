@@ -99,6 +99,7 @@ class SOCKS::Session < IO
   def cleanup : Bool
     close
     free_tls!
+    reset reset_tls: true
 
     true
   end
