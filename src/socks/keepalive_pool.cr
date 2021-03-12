@@ -5,14 +5,22 @@ class SOCKS::KeepAlivePool
   getter latestCleanedUp : Time
   getter mutex : Mutex
 
-  def initialize(@clearInterval : Time::Span = 20_i32.seconds, @capacity : Int32 = 10_i32)
+  def initialize(@clearInterval : Time::Span = 15_i32.seconds, @capacity : Int32 = 10_i32)
     @entries = Hash(UInt64, Entry).new
     @latestCleanedUp = Time.local
     @mutex = Mutex.new :unchecked
   end
 
   def clear
-    @mutex.synchronize { entries.clear }
+    @mutex.synchronize do
+      entries.each do |object_id, entry|
+        entry.transport.destination.close rescue nil
+        entry.transport.destination_tls_context.try &.free
+        entry.transport.destination_tls_socket.try &.free
+
+        entries.delete object_id
+      end
+    end
   end
 
   def size : Int32
@@ -47,7 +55,7 @@ class SOCKS::KeepAlivePool
     @mutex.synchronize { @latestCleanedUp = Time.local }
   end
 
-  private def inactive_entry_cleanup
+  def inactive_entry_cleanup
     @mutex.synchronize do
       while capacity <= entries.size
         object_id, entry = entries.first
@@ -87,6 +95,15 @@ class SOCKS::KeepAlivePool
       end
 
       entries.delete object_id
+
+      if clearInterval <= (Time.local - entry.createdAt)
+        entry.transport.destination.close rescue nil
+        entry.transport.destination_tls_context.try &.free
+        entry.transport.destination_tls_socket.try &.free
+
+        return
+      end
+
       entry.transport
     end
   end
