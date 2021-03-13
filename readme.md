@@ -63,7 +63,7 @@ $ make test
 
 ## Credit
 
-* [\_Icon::Freepik/Communication](https://www.flaticon.com/packs/communication-196)
+* [\_Icon::Freepik/Travel](https://www.flaticon.com/packs/travel-321)
 
 ## Contributors
 
