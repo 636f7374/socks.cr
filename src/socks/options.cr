@@ -1,9 +1,18 @@
 struct SOCKS::Options
+  property connectionPool : ConnectionPool
   property client : Client
   property server : Server
   property session : Session
 
-  def initialize(@client : Client = Client.new, @server : Server = Server.new, @session : Session = Session.new)
+  def initialize(@connectionPool : ConnectionPool = ConnectionPool.new, @client : Client = Client.new, @server : Server = Server.new, @session : Session = Session.new)
+  end
+
+  struct ConnectionPool
+    property clearInterval : Time::Span
+    property capacity : Int32
+
+    def initialize(@clearInterval : Time::Span = 10_i32.seconds, @capacity : Int32 = 5_i32)
+    end
   end
 
   struct Client
