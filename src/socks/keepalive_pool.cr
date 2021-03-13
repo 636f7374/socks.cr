@@ -1,4 +1,4 @@
-class SOCKS::KeepAlivePool
+class SOCKS::ConnectionPool
   getter clearInterval : Time::Span
   getter capacity : Int32
   getter entries : Hash(UInt64, Entry)
@@ -14,9 +14,9 @@ class SOCKS::KeepAlivePool
   def clear
     @mutex.synchronize do
       entries.each do |object_id, entry|
-        entry.transport.destination.close rescue nil
-        entry.transport.destination_tls_context.try &.free
-        entry.transport.destination_tls_socket.try &.free
+        entry.transfer.destination.close rescue nil
+        entry.transfer.destination_tls_context.try &.free
+        entry.transfer.destination_tls_socket.try &.free
 
         entries.delete object_id
       end
@@ -27,22 +27,22 @@ class SOCKS::KeepAlivePool
     @mutex.synchronize { entries.size }
   end
 
-  def unshift(value : Transport)
+  def unshift(value : Transfer)
     inactive_entry_cleanup
     unshift object_id: value.object_id, value: value
   end
 
-  private def unshift(object_id : UInt64, value : Transport)
+  private def unshift(object_id : UInt64, value : Transfer)
     @mutex.synchronize do
       if entry = entries[object_id]?
         entries.delete object_id
 
-        entry.transport.destination.close rescue nil
-        entry.transport.destination_tls_context.try &.free
-        entry.transport.destination_tls_socket.try &.free
+        entry.transfer.destination.close rescue nil
+        entry.transfer.destination_tls_context.try &.free
+        entry.transfer.destination_tls_socket.try &.free
       end
 
-      entries[object_id] = Entry.new transport: value
+      entries[object_id] = Entry.new transfer: value
     end
   end
 
@@ -61,9 +61,9 @@ class SOCKS::KeepAlivePool
         object_id, entry = entries.first
         entries.delete object_id
 
-        entry.transport.destination.close rescue nil
-        entry.transport.destination_tls_context.try &.free
-        entry.transport.destination_tls_socket.try &.free
+        entry.transfer.destination.close rescue nil
+        entry.transfer.destination_tls_context.try &.free
+        entry.transfer.destination_tls_socket.try &.free
       end
     end
 
@@ -73,9 +73,9 @@ class SOCKS::KeepAlivePool
       entries.each do |object_id, entry|
         next unless clearInterval <= (Time.local - entry.createdAt)
 
-        entry.transport.destination.close rescue nil
-        entry.transport.destination_tls_context.try &.free
-        entry.transport.destination_tls_socket.try &.free
+        entry.transfer.destination.close rescue nil
+        entry.transfer.destination_tls_context.try &.free
+        entry.transfer.destination_tls_socket.try &.free
 
         entries.delete object_id
       end
@@ -84,7 +84,7 @@ class SOCKS::KeepAlivePool
     refresh_latest_cleaned_up
   end
 
-  def get? : Transport?
+  def get? : Transfer?
     inactive_entry_cleanup
 
     @mutex.synchronize do
@@ -97,22 +97,22 @@ class SOCKS::KeepAlivePool
       entries.delete object_id
 
       if clearInterval <= (Time.local - entry.createdAt)
-        entry.transport.destination.close rescue nil
-        entry.transport.destination_tls_context.try &.free
-        entry.transport.destination_tls_socket.try &.free
+        entry.transfer.destination.close rescue nil
+        entry.transfer.destination_tls_context.try &.free
+        entry.transfer.destination_tls_socket.try &.free
 
         return
       end
 
-      entry.transport
+      entry.transfer
     end
   end
 
   struct Entry
-    property transport : Transport
+    property transfer : Transfer
     property createdAt : Time
 
-    def initialize(@transport : Transport)
+    def initialize(@transfer : Transfer)
       @createdAt = Time.local
     end
   end

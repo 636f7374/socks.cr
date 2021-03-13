@@ -118,16 +118,16 @@ class SOCKS::Session < IO
     destination_tls_context.try &.free
   end
 
-  def set_transport_tls(transport : Transport)
+  def set_transfer_tls(transfer : Transfer)
     _source_tls_socket = source_tls_socket
-    transport.source_tls_socket = _source_tls_socket if _source_tls_socket
+    transfer.source_tls_socket = _source_tls_socket if _source_tls_socket
     _source_tls_context = source_tls_context
-    transport.source_tls_context = _source_tls_context if _source_tls_context
+    transfer.source_tls_context = _source_tls_context if _source_tls_context
 
     _destination_tls_socket = destination_tls_socket
-    transport.destination_tls_socket = _destination_tls_socket if _destination_tls_socket
+    transfer.destination_tls_socket = _destination_tls_socket if _destination_tls_socket
     _destination_tls_context = destination_tls_context
-    transport.destination_tls_context = _destination_tls_context if _destination_tls_context
+    transfer.destination_tls_context = _destination_tls_context if _destination_tls_context
   end
 
   def reset(reset_tls : Bool)
@@ -146,7 +146,7 @@ class SOCKS::Session < IO
     end
   end
 
-  def reset_peer(side : Transport::Side, reset_tls : Bool)
+  def reset_peer(side : Transfer::Side, reset_tls : Bool)
     closed_memory = IO::Memory.new 0_i32
     closed_memory.close
 

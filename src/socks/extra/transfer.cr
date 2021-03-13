@@ -1,4 +1,4 @@
-class Transport
+class Transfer
   enum Side : UInt8
     Source      = 0_u8
     Destination = 1_u8
