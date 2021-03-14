@@ -258,7 +258,10 @@ class SOCKS::Client < IO
   end
 
   def establish!(command_type : Frames::CommandFlag, destination_address : Socket::IPAddress | Address, remote_dns_resolution : Bool = true)
-    # Send Establish Ask.
+    # Check Options::Switcher.
+
+    raise Exception.new "Client.establish!: command_type is TCPBinding, but Switcher.allowTCPBinding is false." if command_type.tcp_binding? && !options.switcher.allowTCPBinding
+    raise Exception.new "Client.establish!: command_type is AssociateUDP, but Switcher.allowAssociateUDP is false." if command_type.associate_udp? && !options.switcher.allowAssociateUDP
 
     case destination_address
     in Socket::IPAddress
@@ -293,10 +296,12 @@ class SOCKS::Client < IO
       frame_establish.addressType = Frames::AddressFlag::Domain
     end
 
+    # Send Establish Ask.
+
     frame_establish.to_io io: outbound
     exchangeFrames << frame_establish
 
-    # Create Bind Socket
+    # Create Bind Socket.
 
     from_establish = Frames::Establish.from_io io: outbound, ar_type: ARType::Reply, version_flag: version
     exchangeFrames << from_establish
