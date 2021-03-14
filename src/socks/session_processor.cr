@@ -215,7 +215,12 @@ class SOCKS::SessionProcessor
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.sent_done?
-      enhanced_websocket.ping SOCKS::Enhanced::WebSocket::PingFlag::KeepAlive rescue nil
+
+      if transfer_destination.options.switcher.allowWebSocketKeepAlive
+        enhanced_websocket.ping SOCKS::Enhanced::WebSocket::PingFlag::KeepAlive rescue nil
+      else
+        enhanced_websocket.ping rescue nil
+      end
 
       break
     end
