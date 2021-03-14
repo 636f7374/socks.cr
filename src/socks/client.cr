@@ -149,14 +149,14 @@ class SOCKS::Client < IO
     @outbound = Enhanced::WebSocket.new io: protocol
   end
 
-  def notify_keep_alive! : Enhanced::WebSocket::EnhancedPong
+  def notify_keep_alive! : Enhanced::WebSocket::PongFlag
     _outbound = outbound
 
     if _outbound.is_a? Enhanced::WebSocket
-      _outbound.ping event: Enhanced::WebSocket::EnhancedPing::KeepAlive
+      _outbound.ping event: Enhanced::WebSocket::PingFlag::KeepAlive
       received = _outbound.receive_pong_event!
       _outbound.receive_ping_event!
-      _outbound.pong event: Enhanced::WebSocket::EnhancedPong::Confirmed
+      _outbound.pong event: Enhanced::WebSocket::PongFlag::Confirmed
 
       return received
     end
@@ -165,11 +165,11 @@ class SOCKS::Client < IO
 
     if _holding.is_a? Enhanced::WebSocket
       outbound.close rescue nil
-      _holding.ping event: Enhanced::WebSocket::EnhancedPing::KeepAlive
+      _holding.ping event: Enhanced::WebSocket::PingFlag::KeepAlive
       received = _holding.receive_pong_event!
 
       _holding.receive_ping_event!
-      _holding.pong event: Enhanced::WebSocket::EnhancedPong::Confirmed
+      _holding.pong event: Enhanced::WebSocket::PongFlag::Confirmed
 
       @outbound = _holding
       @holding = nil
@@ -177,7 +177,7 @@ class SOCKS::Client < IO
       return received
     end
 
-    Enhanced::WebSocket::EnhancedPong::Refused
+    Enhanced::WebSocket::PongFlag::Refused
   end
 
   def handshake! : Bool

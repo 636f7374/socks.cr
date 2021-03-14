@@ -129,7 +129,7 @@ class SOCKS::SessionProcessor
         end
 
         begin
-          _session_inbound.ping Enhanced::WebSocket::EnhancedPing::KeepAlive
+          _session_inbound.ping Enhanced::WebSocket::PingFlag::KeepAlive
           received = _session_inbound.receive_pong_event!
           raise Exception.new String.build { |io| io << "SessionProcessor.check_inbound_keep_alive: Received from IO to failure status (" << received << ")." } unless received.confirmed?
         rescue ex
@@ -180,7 +180,7 @@ class SOCKS::SessionProcessor
       end
 
       begin
-        _session_holding.ping Enhanced::WebSocket::EnhancedPing::KeepAlive
+        _session_holding.ping Enhanced::WebSocket::PingFlag::KeepAlive
         received = _session_holding.receive_pong_event!
         raise Exception.new String.build { |io| io << "SessionProcessor.check_holding_keep_alive: Received from IO to failure status (" << received << ")." } unless received.confirmed?
       rescue ex
@@ -215,7 +215,7 @@ class SOCKS::SessionProcessor
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.sent_done?
-      enhanced_websocket.ping SOCKS::Enhanced::WebSocket::EnhancedPing::KeepAlive rescue nil
+      enhanced_websocket.ping SOCKS::Enhanced::WebSocket::PingFlag::KeepAlive rescue nil
 
       break
     end
@@ -236,7 +236,7 @@ class SOCKS::SessionProcessor
       begin
         received = enhanced_websocket.receive_ping_event!
         raise Exception.new String.build { |io| io << "SessionProcessor.check_outbound_keep_alive: Received from IO to failure status (" << received << ")." } unless received.keep_alive?
-        enhanced_websocket.pong event: SOCKS::Enhanced::WebSocket::EnhancedPong::Confirmed
+        enhanced_websocket.pong event: SOCKS::Enhanced::WebSocket::PongFlag::Confirmed
       rescue ex
         transfer.cleanup
         session.reset reset_tls: true
