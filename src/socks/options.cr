@@ -1,10 +1,11 @@
 struct SOCKS::Options
   property connectionPool : ConnectionPool
+  property switcher : Switcher
   property client : Client
   property server : Server
   property session : Session
 
-  def initialize(@connectionPool : ConnectionPool = ConnectionPool.new, @client : Client = Client.new, @server : Server = Server.new, @session : Session = Session.new)
+  def initialize(@connectionPool : ConnectionPool = ConnectionPool.new, @switcher : Switcher = Switcher.new, @client : Client = Client.new, @server : Server = Server.new, @session : Session = Session.new)
   end
 
   struct ConnectionPool
@@ -12,6 +13,18 @@ struct SOCKS::Options
     property capacity : Int32
 
     def initialize(@clearInterval : Time::Span = 10_i32.seconds, @capacity : Int32 = 5_i32)
+    end
+  end
+
+  struct Switcher
+    property allowWebSocketKeepAlive : Bool
+    property allowTCPBinding : Bool
+    property allowAssociateUDP : Bool
+
+    def initialize
+      @allowWebSocketKeepAlive = false
+      @allowTCPBinding = true
+      @allowAssociateUDP = true
     end
   end
 
@@ -34,16 +47,10 @@ struct SOCKS::Options
   end
 
   struct Server
-    property allowWebSocketKeepAlive : Bool
-    property allowTCPBinding : Bool
-    property allowAssociateUDP : Bool
     property destinationProtection : DestinationProtection?
     property wrapper : Wrapper?
 
     def initialize
-      @allowWebSocketKeepAlive = false
-      @allowTCPBinding = true
-      @allowAssociateUDP = true
       @destinationProtection = DestinationProtection.new
       @wrapper = nil
     end

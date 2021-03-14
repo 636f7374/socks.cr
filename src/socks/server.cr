@@ -181,14 +181,14 @@ class SOCKS::Server
     case command_type
     in .tcp_connection?
     in .tcp_binding?
-      unless options.server.allowTCPBinding
+      unless options.switcher.allowTCPBinding
         send_establish_frame session: session, status_flag: Frames::StatusFlag::UnsupportedCommand, destination_ip_address: nil
-        raise Exception.new "Because you have disabled Options::Server.allowTCPBinding, this client connection is rejected (UnsupportedCommand)."
+        raise Exception.new "Because you have disabled Options::Switcher.allowTCPBinding, this client connection is rejected (UnsupportedCommand)."
       end
     in .associate_udp?
-      unless options.server.allowAssociateUDP
+      unless options.switcher.allowAssociateUDP
         send_establish_frame session: session, status_flag: Frames::StatusFlag::UnsupportedCommand, destination_ip_address: nil
-        raise Exception.new "Because you have disabled Options::Server.allowAssociateUDP, this client connection is rejected (UnsupportedCommand)."
+        raise Exception.new "Because you have disabled Options::Switcher.allowAssociateUDP, this client connection is rejected (UnsupportedCommand)."
       end
     end
 

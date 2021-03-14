@@ -119,7 +119,7 @@ module SOCKS::Enhanced
 
       case event
       in .keep_alive?
-        allow_keep_alive = options.try &.server.try &.allowWebSocketKeepAlive
+        allow_keep_alive = options.try &.switcher.try &.allowWebSocketKeepAlive
 
         if allow_keep_alive
           pong event: PongFlag::Confirmed
@@ -138,7 +138,7 @@ module SOCKS::Enhanced
 
       case event
       in .confirmed?
-        allow_keep_alive = options.try &.server.try &.allowWebSocketKeepAlive
+        allow_keep_alive = options.try &.switcher.try &.allowWebSocketKeepAlive
 
         if allow_keep_alive
           self.keep_alive = true

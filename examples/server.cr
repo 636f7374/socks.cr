@@ -13,7 +13,7 @@ dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 # This example is used to demonstrate how to use it, you can modify it as appropriate.
 
 options = SOCKS::Options.new
-options.server.allowWebSocketKeepAlive = true
+options.switcher.allowWebSocketKeepAlive = true
 options.server.wrapper = SOCKS::Options::Server::Wrapper::WebSocket.new
 
 tcp_server = TCPServer.new host: "0.0.0.0", port: 1234_i32

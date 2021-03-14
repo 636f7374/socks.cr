@@ -146,7 +146,7 @@ class SOCKS::Client < IO
 
   private def upgrade_websocket!(host : String, port : Int32, path : String = "/", headers : HTTP::Headers = HTTP::Headers.new)
     protocol = HTTP::WebSocket.handshake socket: outbound, host: host, port: port, path: path, headers: headers
-    @outbound = Enhanced::WebSocket.new io: protocol
+    @outbound = Enhanced::WebSocket.new io: protocol, options: options
   end
 
   def notify_keep_alive! : Enhanced::WebSocket::PongFlag

@@ -22,7 +22,7 @@ class SOCKS::SessionProcessor
     transfer.reset!
 
     loop do
-      break unless session.options.server.allowWebSocketKeepAlive
+      break unless session.options.switcher.allowWebSocketKeepAlive
       break unless check_support_keep_alive?
       break if session.closed?
       break unless keep_alive?
