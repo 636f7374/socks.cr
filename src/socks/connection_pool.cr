@@ -14,10 +14,7 @@ class SOCKS::ConnectionPool
   def clear
     @mutex.synchronize do
       entries.each do |object_id, entry|
-        entry.transfer.destination.close rescue nil
-        entry.transfer.destination_tls_context.try &.free
-        entry.transfer.destination_tls_socket.try &.free
-
+        entry.transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
         entries.delete object_id
       end
     end
@@ -35,11 +32,8 @@ class SOCKS::ConnectionPool
   private def unshift(object_id : UInt64, value : Transfer)
     @mutex.synchronize do
       if entry = entries[object_id]?
+        entry.transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
         entries.delete object_id
-
-        entry.transfer.destination.close rescue nil
-        entry.transfer.destination_tls_context.try &.free
-        entry.transfer.destination_tls_socket.try &.free
       end
 
       entries[object_id] = Entry.new transfer: value
@@ -59,11 +53,8 @@ class SOCKS::ConnectionPool
     @mutex.synchronize do
       while capacity <= entries.size
         object_id, entry = entries.first
+        entry.transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
         entries.delete object_id
-
-        entry.transfer.destination.close rescue nil
-        entry.transfer.destination_tls_context.try &.free
-        entry.transfer.destination_tls_socket.try &.free
       end
     end
 
@@ -72,11 +63,7 @@ class SOCKS::ConnectionPool
     @mutex.synchronize do
       entries.each do |object_id, entry|
         next unless clearInterval <= (Time.local - entry.createdAt)
-
-        entry.transfer.destination.close rescue nil
-        entry.transfer.destination_tls_context.try &.free
-        entry.transfer.destination_tls_socket.try &.free
-
+        entry.transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
         entries.delete object_id
       end
     end
@@ -97,9 +84,7 @@ class SOCKS::ConnectionPool
       entries.delete object_id
 
       if clearInterval <= (Time.local - entry.createdAt)
-        entry.transfer.destination.close rescue nil
-        entry.transfer.destination_tls_context.try &.free
-        entry.transfer.destination_tls_socket.try &.free
+        entry.transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
 
         return
       end
