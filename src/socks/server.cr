@@ -1,9 +1,9 @@
 class SOCKS::Server
   getter io : Socket::Server
-  getter dnsResolver : DNS::Resolver
+  getter dnsResolver : DNS::Resolver?
   getter options : Options
 
-  def initialize(@io : Socket::Server, @dnsResolver : DNS::Resolver, @options : Options = Options.new)
+  def initialize(@io : Socket::Server, @dnsResolver : DNS::Resolver?, @options : Options = Options.new)
   end
 
   def local_address : Socket::Address?
@@ -173,8 +173,14 @@ class SOCKS::Server
   end
 
   def establish!(session : Session, from_establish : Frames::Establish, sync_create_outbound_socket : Bool = true) : Bool
-    raise Exception.new "Server.establish!: Establish.commandType cannot be Nil!" unless command_type = from_establish.commandType
-    raise Exception.new "Server.establish!: Establish.destinationAddress or destinationIpAddress cannot be Nil!" unless destination_address = from_establish.get_destination_address
+    begin
+      raise Exception.new "Server.establish!: Establish.commandType cannot be Nil!" unless command_type = from_establish.commandType
+      raise Exception.new "Server.establish!: Establish.destinationAddress or destinationIpAddress cannot be Nil!" unless destination_address = from_establish.get_destination_address
+      raise Exception.new "Server.establish!: Server.dnsResolver is Nil!" unless dns_resolver = dnsResolver
+    rescue ex
+      send_establish_frame session: session, status_flag: Frames::StatusFlag::ConnectionDenied, destination_ip_address: nil
+      raise ex
+    end
 
     # Check if Options::Server accept TCPBinding or AssociateUDP
 
@@ -197,7 +203,7 @@ class SOCKS::Server
     if sync_create_outbound_socket
       begin
         outbound_socket = SOCKS.create_outbound_socket command_type: command_type, destination_address: destination_address,
-          dns_resolver: dnsResolver, tcp_timeout: tcp_outbound_timeout, udp_timeout: udp_outbound_timeout
+          dns_resolver: dns_resolver, tcp_timeout: tcp_outbound_timeout, udp_timeout: udp_outbound_timeout
 
         session.outbound = outbound_socket
         outbound_socket_remote_address = outbound_socket.remote_address rescue nil

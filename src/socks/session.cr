@@ -173,9 +173,9 @@ class SOCKS::Session < IO
   end
 
   private def upgrade_websocket!
-    HTTP::WebSocket.accept inbound
+    HTTP::WebSocket.accept socket: inbound
 
-    protocol = HTTP::WebSocket::Protocol.new io: inbound
+    protocol = HTTP::WebSocket::Protocol.new io: inbound, masked: false, sync_close: true
     @inbound = Enhanced::WebSocket.new io: protocol, options: options
   end
 

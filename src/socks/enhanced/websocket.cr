@@ -28,6 +28,10 @@ module SOCKS::Enhanced
       @mutex = Mutex.new :unchecked
     end
 
+    def io : Protocol
+      @io
+    end
+
     def read_timeout=(value : Int | Time::Span | Nil)
       _io = io
       _io.read_timeout = value if value if _io.responds_to? :read_timeout=
