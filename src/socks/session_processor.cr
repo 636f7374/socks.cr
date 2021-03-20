@@ -12,12 +12,20 @@ class SOCKS::SessionProcessor
     @keepAlive
   end
 
+  def session_id=(value : UInt64)
+    @sessionId = value
+  end
+
+  def session_id
+    @sessionId
+  end
+
   def perform(server : Server)
     return session.cleanup unless outbound = session.outbound
 
     transfer = Transfer.new source: session, destination: outbound, heartbeat: heartbeat_proc
     set_transfer_options transfer: transfer
-    session.set_transfer_tls transfer: transfer
+    session.set_transfer_tls transfer: transfer, reset: true
     perform transfer: transfer
     transfer.reset!
 
@@ -71,7 +79,10 @@ class SOCKS::SessionProcessor
 
   def perform(outbound : IO, connection_pool : ConnectionPool)
     transfer = Transfer.new source: session, destination: outbound, heartbeat: heartbeat_proc
-    session.set_transfer_tls transfer: transfer
+
+    session_id.try { |_session_id| transfer.session_id = _session_id }
+    session.set_transfer_tls transfer: transfer, reset: true
+
     perform transfer: transfer, connection_pool: connection_pool
   end
 

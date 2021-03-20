@@ -309,7 +309,9 @@ class SOCKS::Server
 
     case destination_address
     in Address
-      raise Exception.new "Server.check_destination_protection!: Establish.destinationAddress is in your preset destinationProtection!" if destination_protection.addresses.includes? destination_address
+      if destination_protection.addresses.find { |protection_address| (protection_address.host == destination_address.host) && (protection_address.port == destination_address.port) }
+        raise Exception.new "Server.check_destination_protection!: Establish.destinationAddress is in your preset destinationProtection!"
+      end
     in Socket::IPAddress
       server_local_address = io.local_address
 
@@ -440,6 +442,7 @@ class SOCKS::Server
 
   def accept? : Session?
     return unless socket = io.accept?
+    socket.sync = true if socket.responds_to? :sync=
 
     client_timeout.try do |_timeout|
       socket.read_timeout = _timeout.read if socket.responds_to? :read_timeout=

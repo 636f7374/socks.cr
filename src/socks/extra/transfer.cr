@@ -70,6 +70,14 @@ class Transfer
     @destinationTlsContext
   end
 
+  def session_id=(value : UInt64)
+    @sessionId = value
+  end
+
+  def session_id
+    @sessionId
+  end
+
   def finished?
     concurrentMutex.synchronize { concurrentFibers.all? { |fiber| fiber.dead? } }
   end
