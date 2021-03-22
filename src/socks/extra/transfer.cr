@@ -70,14 +70,6 @@ class Transfer
     @destinationTlsContext
   end
 
-  def session_id=(value : UInt64)
-    @sessionId = value
-  end
-
-  def session_id
-    @sessionId
-  end
-
   def finished?
     concurrentMutex.synchronize { concurrentFibers.all? { |fiber| fiber.dead? } }
   end
@@ -264,20 +256,24 @@ class Transfer
         # Negative two means zero, such as transmission failure.
         # It can also be understood as `undefined`, `nil`.
 
-        greater_zero = (0_i64 <= _sent_size) && (0_i64 <= _received_size)
+        both_greater_zero = (0_i64 <= _sent_size) && (0_i64 <= _received_size)
+        negative_one = (-1_i64 == _sent_size) || (-1_i64 == _received_size)
         negative_two = (-2_i64 == _sent_size) || (-2_i64 == _received_size)
 
-        if greater_zero || negative_two
-          _sent_size = 0_i64 if -2_i64 == _sent_size
-          _received_size = 0_i64 if -2_i64 == _received_size
+        unless negative_one
+          if both_greater_zero || negative_two
+            _sent_size = 0_i64 if -2_i64 == _sent_size
+            _received_size = 0_i64 if -2_i64 == _received_size
 
-          callback.try &.call _sent_size, _received_size
+            callback.try &.call _sent_size, _received_size
 
-          break
+            break
+          end
         end
 
         next sleep 0.25_f32.seconds unless heartbeat
         next sleep 0.25_f32.seconds if (0_i64 <= _sent_size) || (0_i64 <= _received_size) || negative_two
+
         heartbeat.try &.call rescue nil
         sleep heartbeatInterval.seconds
       end

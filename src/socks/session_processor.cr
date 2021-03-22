@@ -12,20 +12,21 @@ class SOCKS::SessionProcessor
     @keepAlive
   end
 
-  def session_id=(value : UInt64)
-    @sessionId = value
+  def callback=(value : Proc(Int64, Int64, Nil)?)
+    @callback = value
   end
 
-  def session_id
-    @sessionId
+  def callback
+    @callback
   end
 
   def perform(server : Server)
     return session.cleanup unless outbound = session.outbound
 
-    transfer = Transfer.new source: session, destination: outbound, heartbeat: heartbeat_proc
+    transfer = Transfer.new source: session, destination: outbound, callback: callback, heartbeat: heartbeat_proc
     set_transfer_options transfer: transfer
     session.set_transfer_tls transfer: transfer, reset: true
+
     perform transfer: transfer
     transfer.reset!
 
@@ -78,9 +79,7 @@ class SOCKS::SessionProcessor
   end
 
   def perform(outbound : IO, connection_pool : ConnectionPool)
-    transfer = Transfer.new source: session, destination: outbound, heartbeat: heartbeat_proc
-
-    session_id.try { |_session_id| transfer.session_id = _session_id }
+    transfer = Transfer.new source: session, destination: outbound, callback: callback, heartbeat: heartbeat_proc
     session.set_transfer_tls transfer: transfer, reset: true
 
     perform transfer: transfer, connection_pool: connection_pool
@@ -107,6 +106,13 @@ class SOCKS::SessionProcessor
   end
 
   private def set_transfer_options(transfer : Transfer)
+    # This function is used as an overridable.
+    # E.g. SessionID.
+
+    set_transfer_options! transfer: transfer
+  end
+
+  private def set_transfer_options!(transfer : Transfer)
     transfer.heartbeatInterval = session.options.session.heartbeatInterval
     transfer.aliveInterval = session.options.session.aliveInterval
 
