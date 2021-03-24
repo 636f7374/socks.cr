@@ -12,7 +12,7 @@ class SOCKS::SessionProcessor
     @keepAlive
   end
 
-  def callback=(value : Proc(Int64, Int64, Nil)?)
+  def callback=(value : Proc(Transfer, UInt64, UInt64, Nil)?)
     @callback = value
   end
 
@@ -23,7 +23,7 @@ class SOCKS::SessionProcessor
   def perform(server : Server)
     return session.cleanup unless outbound = session.outbound
 
-    transfer = Transfer.new source: session, destination: outbound, callback: callback, heartbeat: heartbeat_proc
+    transfer = Transfer.new source: session, destination: outbound, callback: callback, heartbeatCallback: heartbeat_proc
     set_transfer_options transfer: transfer
     session.set_transfer_tls transfer: transfer, reset: true
 
@@ -79,7 +79,7 @@ class SOCKS::SessionProcessor
   end
 
   def perform(outbound : IO, connection_pool : ConnectionPool)
-    transfer = Transfer.new source: session, destination: outbound, callback: callback, heartbeat: heartbeat_proc
+    transfer = Transfer.new source: session, destination: outbound, callback: callback, heartbeatCallback: heartbeat_proc
     session.set_transfer_tls transfer: transfer, reset: true
 
     perform transfer: transfer, connection_pool: connection_pool
@@ -286,8 +286,8 @@ class SOCKS::SessionProcessor
     end
   end
 
-  private def heartbeat_proc : Proc(Nil)?
-    ->do
+  private def heartbeat_proc : Proc(Transfer, Nil)?
+    ->(transfer : Transfer) do
       _session_inbound = session.inbound
       _session_inbound.ping rescue nil if _session_inbound.is_a? Enhanced::WebSocket
 

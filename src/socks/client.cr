@@ -100,6 +100,10 @@ class SOCKS::Client < IO
     @outbound
   end
 
+  def holding : IO?
+    @holding
+  end
+
   def local_address : Socket::Address?
     _io = outbound
     _io.responds_to?(:local_address) ? _io.local_address : nil

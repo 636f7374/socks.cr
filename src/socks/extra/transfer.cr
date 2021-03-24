@@ -6,36 +6,52 @@ class Transfer
 
   property source : IO
   property destination : IO
-  getter callback : Proc(Int64, Int64, Nil)?
-  getter heartbeat : Proc(Nil)?
-  getter latestAliveTime : Time
-  getter sentSize : Atomic(Int64)
-  getter receivedSize : Atomic(Int64)
+  getter callback : Proc(Transfer, UInt64, UInt64, Nil)?
+  getter heartbeatCallback : Proc(Transfer, Nil)?
+  getter firstAliveTime : Time?
+  getter latestAliveTime : Time?
+  getter sentStatus : Atomic(Int8)
+  getter receivedStatus : Atomic(Int8)
+  getter sentSize : Atomic(UInt64)
+  getter receivedSize : Atomic(UInt64)
+  getter heartbeatCounter : Atomic(UInt64)
   property heartbeatInterval : Time::Span
   property aliveInterval : Time::Span
-  property extraSentSize : Int32 | Int64
-  property extraReceivedSize : Int32 | Int64
+  property extraSentSize : UInt64
+  property extraReceivedSize : UInt64
   getter concurrentFibers : Array(Fiber)
   getter concurrentMutex : Mutex
 
-  def initialize(@source : IO, @destination : IO, @callback : Proc(Int64, Int64, Nil)? = nil, @heartbeat : Proc(Nil)? = nil)
-    @latestAliveTime = Time.local
-    @sentSize = Atomic(Int64).new -1_i64
-    @receivedSize = Atomic(Int64).new -1_i64
+  def initialize(@source : IO, @destination : IO, @callback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Nil)? = nil)
+    @firstAliveTime = nil
+    @latestAliveTime = nil
+    @sentStatus = Atomic(Int8).new -1_i8
+    @receivedStatus = Atomic(Int8).new -1_i8
+    @sentSize = Atomic(UInt64).new 0_u64
+    @receivedSize = Atomic(UInt64).new 0_u64
+    @heartbeatCounter = Atomic(UInt64).new 0_u64
     @heartbeatInterval = 3_i32.seconds
     @aliveInterval = 1_i32.minutes
-    @extraSentSize = 0_i32
-    @extraReceivedSize = 0_i32
+    @extraSentSize = 0_u64
+    @extraReceivedSize = 0_u64
     @concurrentFibers = [] of Fiber
     @concurrentMutex = Mutex.new :unchecked
+  end
+
+  private def first_alive_time=(value : Time)
+    @concurrentMutex.synchronize { @firstAliveTime = value }
+  end
+
+  def first_alive_time
+    @concurrentMutex.synchronize { @firstAliveTime }
   end
 
   private def latest_alive_time=(value : Time)
     @concurrentMutex.synchronize { @latestAliveTime = value }
   end
 
-  private def latest_alive_time
-    @concurrentMutex.synchronize { @latestAliveTime }
+  def latest_alive_time
+    @concurrentMutex.synchronize { @latestAliveTime ||= Time.local }
   end
 
   def source_tls_socket=(value : OpenSSL::SSL::Socket::Server)
@@ -75,16 +91,18 @@ class Transfer
   end
 
   def done? : Bool
-    sent_done = 0_i64 <= sentSize.get
-    received_done = 0_i64 <= receivedSize.get
+    sent_done = sentStatus.get.zero?
+    received_done = receivedStatus.get.zero?
 
     finished? || sent_done || received_done
   end
 
   def sent_done? : Bool
-    sent_done = 0_i64 <= sentSize.get
+    sentStatus.get.zero?
+  end
 
-    finished? || sent_done
+  def receive_done? : Bool
+    receivedStatus.get.zero?
   end
 
   def cleanup
@@ -184,11 +202,15 @@ class Transfer
     return false unless finished?
 
     @concurrentMutex.synchronize do
-      @latestAliveTime = Time.local
-      @sentSize = Atomic(Int64).new -1_i64
-      @receivedSize = Atomic(Int64).new -1_i64
-      @extraSentSize = 0_i32
-      @extraReceivedSize = 0_i32
+      @firstAliveTime = nil
+      @latestAliveTime = nil
+      @sentStatus.set -1_i8
+      @receivedStatus.set -1_i8
+      @sentSize.set 0_u64
+      @receivedSize.set 0_u64
+      @heartbeatCounter.set 0_u64
+      @extraSentSize = 0_u64
+      @extraReceivedSize = 0_u64
       @concurrentFibers.clear
     end
 
@@ -196,15 +218,19 @@ class Transfer
   end
 
   def perform
+    self.first_alive_time = Time.local
     self.latest_alive_time = Time.local
 
     sent_fiber = spawn do
       exception = nil
-      count = 0_i64
+      count = 0_u64
 
       loop do
         copy_size = begin
-          IO.yield_copy(src: source, dst: destination) { |count, length| self.latest_alive_time = Time.local }
+          IO.yield_copy src: source, dst: destination do |count, length|
+            self.latest_alive_time = Time.local
+            @sentSize.add(length.to_u64) rescue 0_u64
+          end
         rescue ex : IO::CopyException
           exception = ex.cause
           ex.count
@@ -212,24 +238,26 @@ class Transfer
 
         copy_size.try { |_copy_size| count += _copy_size }
         break if aliveInterval <= (Time.local - latest_alive_time)
-        break if 0_i64 <= receivedSize.get
+        break if receivedStatus.get.zero?
         next sleep 0.05_f32.seconds if exception.is_a? IO::TimeoutError
 
         break
       end
 
-      count += 1_i64 if 0_i64 < count
-      count = -1_i64 if count.zero?
-      @sentSize.add (count + extraSentSize)
+      @sentSize.add(extraSentSize) rescue nil
+      @sentStatus.set 0_u64
     end
 
     receive_fiber = spawn do
       exception = nil
-      count = 0_i64
+      count = 0_u64
 
       loop do
         copy_size = begin
-          IO.yield_copy(src: destination, dst: source) { |count, length| self.latest_alive_time = Time.local }
+          IO.yield_copy src: destination, dst: source do |count, length|
+            self.latest_alive_time = Time.local
+            @receivedSize.add(length.to_u64) rescue 0_u64
+          end
         rescue ex : IO::CopyException
           exception = ex.cause
           ex.count
@@ -237,44 +265,32 @@ class Transfer
 
         copy_size.try { |_copy_size| count += _copy_size }
         break if aliveInterval <= (Time.local - latest_alive_time)
-        break if 0_i64 <= sentSize.get
+        break if sentStatus.get.zero?
         next sleep 0.05_f32.seconds if exception.is_a? IO::TimeoutError
 
         break
       end
 
-      count += 1_i64 if 0_i64 < count
-      count = -1_i64 if count.zero?
-      @receivedSize.add (count + extraReceivedSize)
+      @receivedSize.add(extraReceivedSize) rescue nil
+      @receivedStatus.set 0_u64
     end
 
     mixed_fiber = spawn do
       loop do
-        _sent_size = sentSize.get
-        _received_size = receivedSize.get
+        _sent_size, _received_size = Tuple.new sentSize.get, receivedSize.get
 
-        # Negative two means zero, such as transmission failure.
-        # It can also be understood as `undefined`, `nil`.
+        if sent_done? || receive_done?
+          callback.try &.call self, _sent_size, _received_size
 
-        both_greater_zero = (0_i64 <= _sent_size) && (0_i64 <= _received_size)
-        negative_one = (-1_i64 == _sent_size) || (-1_i64 == _received_size)
-        negative_two = (-2_i64 == _sent_size) || (-2_i64 == _received_size)
-
-        unless negative_one
-          if both_greater_zero || negative_two
-            _sent_size = 0_i64 if -2_i64 == _sent_size
-            _received_size = 0_i64 if -2_i64 == _received_size
-
-            callback.try &.call _sent_size, _received_size
-
-            break
-          end
+          break
         end
 
-        next sleep 0.25_f32.seconds unless heartbeat
-        next sleep 0.25_f32.seconds if (0_i64 <= _sent_size) || (0_i64 <= _received_size) || negative_two
+        next sleep 0.25_f32.seconds unless heartbeat_callback = heartbeatCallback
+        next sleep 0.25_f32.seconds if sent_done? || receive_done?
 
-        heartbeat.try &.call rescue nil
+        heartbeat_callback.call self rescue nil
+        @concurrentMutex.synchronize { @heartbeatCounter.add(1_i64) rescue nil }
+
         sleep heartbeatInterval.seconds
       end
     end
