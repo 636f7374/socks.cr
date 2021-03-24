@@ -54,6 +54,10 @@ class Transfer
     @concurrentMutex.synchronize { @latestAliveTime ||= Time.local }
   end
 
+  def heartbeat_counter
+    @heartbeatCounter
+  end
+
   def source_tls_socket=(value : OpenSSL::SSL::Socket::Server)
     @sourceTlsSocket = value
   end

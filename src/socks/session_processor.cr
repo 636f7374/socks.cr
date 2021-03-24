@@ -1,23 +1,11 @@
 class SOCKS::SessionProcessor
   property session : Session
+  getter callback : Proc(Transfer, UInt64, UInt64, Nil)?
+  getter heartbeatCallback : Proc(Transfer, Nil)?
+  getter keepAlive : Bool?
 
-  def initialize(@session : Session)
-  end
-
-  private def keep_alive=(value : Bool?)
-    @keepAlive = value
-  end
-
-  private def keep_alive?
-    @keepAlive
-  end
-
-  def callback=(value : Proc(Transfer, UInt64, UInt64, Nil)?)
-    @callback = value
-  end
-
-  def callback
-    @callback
+  def initialize(@session : Session, @callback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Nil)? = nil)
+    @keepAlive = nil
   end
 
   def perform(server : Server)
@@ -34,7 +22,7 @@ class SOCKS::SessionProcessor
       break unless session.options.switcher.allowWebSocketKeepAlive
       break unless check_support_keep_alive?
       break if session.closed?
-      break unless keep_alive?
+      break unless keepAlive
 
       begin
         server.establish! session
@@ -59,7 +47,7 @@ class SOCKS::SessionProcessor
   end
 
   private def perform(transfer : Transfer)
-    self.keep_alive = nil
+    @keepAlive = nil
     transfer.perform
 
     loop do
@@ -70,7 +58,7 @@ class SOCKS::SessionProcessor
         transfer.cleanup
         session.reset reset_tls: true
 
-        self.keep_alive = false
+        @keepAlive = false
         break
       end
 
@@ -86,8 +74,8 @@ class SOCKS::SessionProcessor
   end
 
   def perform(transfer : Transfer, connection_pool : ConnectionPool)
+    @keepAlive = nil
     set_transfer_options transfer: transfer
-    self.keep_alive = nil
     transfer.perform
 
     loop do
@@ -97,7 +85,7 @@ class SOCKS::SessionProcessor
         transfer.cleanup
         session.reset reset_tls: true
 
-        self.keep_alive = false
+        @keepAlive = false
         break
       end
 
@@ -139,7 +127,7 @@ class SOCKS::SessionProcessor
           transfer.cleanup
           session.reset reset_tls: true
 
-          self.keep_alive = false
+          @keepAlive = false
           _session_inbound.keep_alive = nil
 
           return true
@@ -153,7 +141,7 @@ class SOCKS::SessionProcessor
           transfer.cleanup
           session.reset reset_tls: true
 
-          self.keep_alive = false
+          @keepAlive = false
           _session_inbound.keep_alive = nil
 
           return true
@@ -162,7 +150,7 @@ class SOCKS::SessionProcessor
         transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
         session.reset_peer side: Transfer::Side::Destination, reset_tls: true
 
-        self.keep_alive = true
+        @keepAlive = true
         _session_inbound.keep_alive = nil
 
         return true
@@ -190,7 +178,7 @@ class SOCKS::SessionProcessor
         transfer.cleanup
         session.reset reset_tls: true
 
-        self.keep_alive = false
+        @keepAlive = false
         _session_holding.keep_alive = nil
 
         return true
@@ -204,7 +192,7 @@ class SOCKS::SessionProcessor
         transfer.cleanup
         session.reset reset_tls: true
 
-        self.keep_alive = false
+        @keepAlive = false
         _session_holding.keep_alive = nil
 
         return true
@@ -217,7 +205,7 @@ class SOCKS::SessionProcessor
       session.inbound = _session_holding
       session.holding = nil
 
-      self.keep_alive = true
+      @keepAlive = true
       _session_holding.keep_alive = nil
 
       return true
@@ -249,7 +237,7 @@ class SOCKS::SessionProcessor
         transfer.cleanup
         session.reset reset_tls: true
 
-        self.keep_alive = false
+        @keepAlive = false
         enhanced_websocket.keep_alive = nil
 
         return true
@@ -263,7 +251,7 @@ class SOCKS::SessionProcessor
         transfer.cleanup
         session.reset reset_tls: true
 
-        self.keep_alive = false
+        @keepAlive = false
         enhanced_websocket.keep_alive = nil
 
         return true
@@ -278,7 +266,7 @@ class SOCKS::SessionProcessor
       transfer_destination.holding.try &.close rescue nil
       transfer_destination.holding = nil
 
-      self.keep_alive = true
+      @keepAlive = true
       enhanced_websocket.keep_alive = nil
       connection_pool.unshift value: transfer
 
@@ -288,6 +276,8 @@ class SOCKS::SessionProcessor
 
   private def heartbeat_proc : Proc(Transfer, Nil)?
     ->(transfer : Transfer) do
+      heartbeatCallback.try &.call transfer
+
       _session_inbound = session.inbound
       _session_inbound.ping rescue nil if _session_inbound.is_a? Enhanced::WebSocket
 
