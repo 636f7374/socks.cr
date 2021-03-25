@@ -97,7 +97,7 @@ module SOCKS::Enhanced
           case _ping_type
           in .keep_alive?
             process_enhanced_ping! ping_type: _ping_type
-            raise Exception.new String.build { |io| io << "Received from IO to KeepAlive Ping permissionType (" << _ping_type << ")." }
+            raise Exception.new String.build { |io| io << "eventType received from IO (" << _ping_type << ")." }
           end
         when .pong?
           slice = receive_buffer.to_slice[0_i32, receive.size]
@@ -109,10 +109,10 @@ module SOCKS::Enhanced
           case _pong_type
           in .confirmed?
             process_enhanced_pong! _pong_type
-            raise Exception.new String.build { |io| io << "Received from IO to KeepAlive Pong permissionType (" << _pong_type << ")." }
+            raise Exception.new String.build { |io| io << "permissionType received from IO (" << _pong_type << ")." }
           in .refused?
             process_enhanced_pong! _pong_type
-            raise Exception.new String.build { |io| io << "Received from IO to KeepAlive Pong permissionType (" << _pong_type << ")." }
+            raise Exception.new String.build { |io| io << "permissionType received from IO (" << _pong_type << ")." }
           end
         end
       end

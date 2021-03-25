@@ -158,11 +158,14 @@ class SOCKS::Client < IO
 
     if _outbound.is_a? Enhanced::WebSocket
       _outbound.ping event: Enhanced::WebSocket::PingFlag::KeepAlive
-      received = _outbound.receive_pong_event!
-      _outbound.receive_ping_event!
+      pong_received = _outbound.receive_pong_event!
+      raise Exception.new String.build { |io| io << "permissionType received from IO (" << pong_received << ")." } if pong_received.refused?
+
+      ping_received = _outbound.receive_ping_event!
+      raise Exception.new String.build { |io| io << "Unknown Ping eventType received from IO (" << ping_received << ")." } unless ping_received.keep_alive?
       _outbound.pong event: Enhanced::WebSocket::PongFlag::Confirmed
 
-      return received
+      return pong_received
     end
 
     _holding = holding
@@ -170,15 +173,17 @@ class SOCKS::Client < IO
     if _holding.is_a? Enhanced::WebSocket
       outbound.close rescue nil
       _holding.ping event: Enhanced::WebSocket::PingFlag::KeepAlive
-      received = _holding.receive_pong_event!
+      pong_received = _holding.receive_pong_event!
+      raise Exception.new String.build { |io| io << "permissionType received from IO (" << pong_received << ")." } if pong_received.refused?
 
-      _holding.receive_ping_event!
+      ping_received = _holding.receive_ping_event!
+      raise Exception.new String.build { |io| io << "Unknown Ping eventType received from IO (" << ping_received << ")." } unless ping_received.keep_alive?
       _holding.pong event: Enhanced::WebSocket::PongFlag::Confirmed
 
       @outbound = _holding
       @holding = nil
 
-      return received
+      return pong_received
     end
 
     Enhanced::WebSocket::PongFlag::Refused
