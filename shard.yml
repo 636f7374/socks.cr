@@ -1,14 +1,16 @@
 name: socks
-version: 0.1.0
+version: 1.0.0
 
 dependencies:
   dns:
     github: 636f7374/dns.cr
+    version: ~> 1.0.0
   interface_address:
     github: 64726f70/interface_address
+    version: ~> 1.0.0
 
 authors:
   - 636f7374
 
-crystal: 1.0.0
+crystal: ">= 1.0.0"
 license: BSDv3
