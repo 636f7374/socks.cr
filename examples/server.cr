@@ -8,13 +8,14 @@ dns_servers << DNS::Address.new ipAddress: Socket::IPAddress.new("8.8.8.8", 53_i
 dns_servers << DNS::Address.new ipAddress: Socket::IPAddress.new("8.8.4.4", 853_i32), protocolType: DNS::ProtocolType::TLS
 dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 
-# `SOCKS::Server::Options`, adjust the server policy, such as whether to allow WebSocketKeepAlive.
-# Finally, you call `SOCKS::SessionProcessor.perform` to automatically process.
-# This example is used to demonstrate how to use it, you can modify it as appropriate.
+# `SOCKS::Options`, adjust the server policy, such as whether to allow WebSocketKeepAlive.
 
 options = SOCKS::Options.new
 options.switcher.allowWebSocketKeepAlive = true
 options.server.wrapper = SOCKS::Options::Server::Wrapper::WebSocket.new
+
+# Finally, you call `SOCKS::SessionProcessor.perform` to automatically process.
+# This example is used to demonstrate how to use it, you can modify it as appropriate.
 
 tcp_server = TCPServer.new host: "0.0.0.0", port: 1234_i32
 server = SOCKS::Server.new io: tcp_server, dnsResolver: dns_resolver, options: options
@@ -45,8 +46,8 @@ loop do
   spawn do
     begin
       _session.process_upgrade!
-      server.handshake! _session
-      server.establish! _session
+      server.handshake! session: _session
+      server.establish! session: _session
     rescue ex
       _session.cleanup rescue nil
 

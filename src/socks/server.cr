@@ -95,12 +95,7 @@ class SOCKS::Server
       frame_negotiate.to_io session
       session.exchangeFrames << frame_negotiate
 
-      message = String.build do |io|
-        io << "Server.handshake!: The authentication method requested by the client (" << _negotiate_methods.to_s
-        io << ") " << "is inconsistent with the authentication method set by the server (" << authentication.to_s << ")."
-      end
-
-      raise Exception.new message
+      raise Exception.new String.build { |io| io << "Server.handshake!: The authentication method requested by the client (" << _negotiate_methods.to_s << ") " << "is inconsistent with the authentication method set by the server (" << authentication.to_s << ")." }
     end
 
     if _negotiate_authenticate_frame && (1_i32 == _negotiate_methods.size) && _negotiate_methods_first.user_name_password?
