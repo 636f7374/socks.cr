@@ -58,36 +58,36 @@ class Transfer
     @heartbeatCounter
   end
 
-  def source_tls_socket=(value : OpenSSL::SSL::Socket::Server)
-    @sourceTlsSocket = value
+  def source_tls_sockets=(value : Set(OpenSSL::SSL::Socket::Server))
+    @sourceTlsSockets = value
   end
 
-  def source_tls_socket
-    @sourceTlsSocket
+  def source_tls_sockets
+    @sourceTlsSockets
   end
 
-  def source_tls_context=(value : OpenSSL::SSL::Context::Server)
-    @sourceTlsContext = value
+  def source_tls_contexts=(value : Set(OpenSSL::SSL::Context::Server))
+    @sourceTlsContexts = value
   end
 
-  def source_tls_context
-    @sourceTlsContext
+  def source_tls_contexts
+    @sourceTlsContexts
   end
 
-  def destination_tls_socket=(value : OpenSSL::SSL::Socket::Client)
-    @destinationTlsSocket = value
+  def destination_tls_sockets=(value : Set(OpenSSL::SSL::Socket::Client))
+    @destinationTlsSockets = value
   end
 
-  def destination_tls_socket
-    @destinationTlsSocket
+  def destination_tls_sockets
+    @destinationTlsSockets
   end
 
-  def destination_tls_context=(value : OpenSSL::SSL::Context::Client)
-    @destinationTlsContext = value
+  def destination_tls_contexts=(value : Set(OpenSSL::SSL::Context::Client))
+    @destinationTlsContexts = value
   end
 
-  def destination_tls_context
-    @destinationTlsContext
+  def destination_tls_contexts
+    @destinationTlsContexts
   end
 
   def finished?
@@ -160,10 +160,10 @@ class Transfer
       @destination = closed_memory
 
       if reset_tls
-        @sourceTlsSocket = nil
-        @sourceTlsContext = nil
-        @destinationTlsSocket = nil
-        @destinationTlsContext = nil
+        @sourceTlsSockets = nil
+        @sourceTlsContexts = nil
+        @destinationTlsSockets = nil
+        @destinationTlsContexts = nil
       end
     end
   end
@@ -178,28 +178,32 @@ class Transfer
         @source = closed_memory
 
         if reset_tls
-          @sourceTlsSocket = nil
-          @sourceTlsContext = nil
+          @sourceTlsSockets = nil
+          @sourceTlsContexts = nil
         end
       in .destination?
         @destination = closed_memory
 
         if reset_tls
-          @destinationTlsSocket = nil
-          @destinationTlsContext = nil
+          @destinationTlsSockets = nil
+          @destinationTlsContexts = nil
         end
       end
     end
   end
 
   private def free_source_tls
-    source_tls_socket.try &.free
-    source_tls_context.try &.free
+    source_tls_sockets.try &.each &.free
+    source_tls_contexts.try &.each &.free
+
+    true
   end
 
   private def free_destination_tls
-    destination_tls_socket.try &.free
-    destination_tls_context.try &.free
+    destination_tls_sockets.try &.each &.free
+    destination_tls_contexts.try &.each &.free
+
+    true
   end
 
   def reset! : Bool

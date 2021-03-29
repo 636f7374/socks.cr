@@ -43,36 +43,44 @@ class SOCKS::Session < IO
     _io.responds_to?(:remote_address) ? _io.remote_address : nil
   end
 
-  def source_tls_socket=(value : OpenSSL::SSL::Socket::Server)
-    @sourceTlsSocket = value
+  def add_source_tls_socket(value : OpenSSL::SSL::Socket::Server)
+    source_tls_sockets = @sourceTlsSockets ||= Set(OpenSSL::SSL::Socket::Server).new
+    source_tls_sockets << value
+    @sourceTlsSockets = source_tls_sockets
   end
 
-  def source_tls_socket
-    @sourceTlsSocket
+  def source_tls_sockets
+    @sourceTlsSockets ||= Set(OpenSSL::SSL::Socket::Server).new
   end
 
-  def source_tls_context=(value : OpenSSL::SSL::Context::Server)
-    @sourceTlsContext = value
+  def add_source_tls_context=(value : OpenSSL::SSL::Context::Server)
+    source_tls_contexts = @sourceTlsContexts ||= Set(OpenSSL::SSL::Context::Server).new
+    source_tls_contexts << value
+    @sourceTlsContexts = source_tls_contexts
   end
 
-  def source_tls_context
-    @sourceTlsContext
+  def source_tls_contexts
+    @sourceTlsContexts ||= Set(OpenSSL::SSL::Context::Server).new
   end
 
-  def destination_tls_socket=(value : OpenSSL::SSL::Socket::Client)
-    @destinationTlsSocket = value
+  def add_destination_tls_socket(value : OpenSSL::SSL::Socket::Client)
+    destination_tls_sockets = @destinationTlsSockets ||= Set(OpenSSL::SSL::Socket::Client).new
+    destination_tls_sockets << value
+    @destinationTlsSockets = destination_tls_sockets
   end
 
-  def destination_tls_socket
-    @destinationTlsSocket
+  def destination_tls_sockets
+    @destinationTlsSockets ||= Set(OpenSSL::SSL::Socket::Client).new
   end
 
-  def destination_tls_context=(value : OpenSSL::SSL::Context::Client)
-    @destinationTlsContext = value
+  def add_destination_tls_context(value : OpenSSL::SSL::Context::Client)
+    destination_tls_contexts = @destinationTlsContexts ||= Set(OpenSSL::SSL::Context::Client).new
+    destination_tls_contexts << value
+    @destinationTlsContexts = destination_tls_contexts
   end
 
-  def destination_tls_context
-    @destinationTlsContext
+  def destination_tls_contexts
+    @destinationTlsContexts ||= Set(OpenSSL::SSL::Context::Client).new
   end
 
   def read(slice : Bytes) : Int32
@@ -105,35 +113,38 @@ class SOCKS::Session < IO
   end
 
   private def free_tls!
-    source_tls_socket.try &.skip_finalize = true
-    source_tls_socket.try &.free
+    source_tls_sockets.each do |source_tls_socket|
+      source_tls_socket.skip_finalize = true
+      source_tls_socket.free
+    end
 
-    source_tls_context.try &.skip_finalize = true
-    source_tls_context.try &.free
+    source_tls_contexts.each do |source_tls_context|
+      source_tls_context.skip_finalize = true
+      source_tls_context.free
+    end
 
-    destination_tls_socket.try &.skip_finalize = true
-    destination_tls_socket.try &.free
+    destination_tls_sockets.each do |destination_tls_socket|
+      destination_tls_socket.skip_finalize = true
+      destination_tls_socket.free
+    end
 
-    destination_tls_context.try &.skip_finalize = true
-    destination_tls_context.try &.free
+    destination_tls_contexts.each do |destination_tls_context|
+      destination_tls_context.skip_finalize = true
+      destination_tls_context.free
+    end
   end
 
   def set_transfer_tls(transfer : Transfer, reset : Bool)
-    _source_tls_socket = source_tls_socket
-    transfer.source_tls_socket = _source_tls_socket if _source_tls_socket
-    _source_tls_context = source_tls_context
-    transfer.source_tls_context = _source_tls_context if _source_tls_context
-
-    _destination_tls_socket = destination_tls_socket
-    transfer.destination_tls_socket = _destination_tls_socket if _destination_tls_socket
-    _destination_tls_context = destination_tls_context
-    transfer.destination_tls_context = _destination_tls_context if _destination_tls_context
+    transfer.source_tls_sockets = source_tls_sockets
+    transfer.source_tls_contexts = source_tls_contexts
+    transfer.destination_tls_sockets = destination_tls_sockets
+    transfer.destination_tls_contexts = destination_tls_contexts
 
     if reset
-      @sourceTlsSocket = nil
-      @sourceTlsContext = nil
-      @destinationTlsSocket = nil
-      @destinationTlsContext = nil
+      @sourceTlsSockets = nil
+      @sourceTlsContexts = nil
+      @destinationTlsSockets = nil
+      @destinationTlsContexts = nil
     end
   end
 
@@ -146,10 +157,10 @@ class SOCKS::Session < IO
     @outbound = closed_memory
 
     if reset_tls
-      @sourceTlsSocket = nil
-      @sourceTlsContext = nil
-      @destinationTlsSocket = nil
-      @destinationTlsContext = nil
+      @sourceTlsSockets = nil
+      @sourceTlsContexts = nil
+      @destinationTlsSockets = nil
+      @destinationTlsContexts = nil
     end
   end
 
@@ -162,15 +173,15 @@ class SOCKS::Session < IO
       @inbound = closed_memory
 
       if reset_tls
-        @sourceTlsSocket = nil
-        @sourceTlsContext = nil
+        @sourceTlsSockets = nil
+        @sourceTlsContexts = nil
       end
     in .destination?
       @outbound = closed_memory
 
       if reset_tls
-        @destinationTlsSocket = nil
-        @destinationTlsContext = nil
+        @destinationTlsSockets = nil
+        @destinationTlsContexts = nil
       end
     end
   end
