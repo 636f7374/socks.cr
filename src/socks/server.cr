@@ -164,7 +164,8 @@ class SOCKS::Server
 
     return Tuple.new from_establish, command_type, destination_address unless start_immediately
     establish! session: session, from_establish: from_establish, sync_create_outbound_socket: sync_create_outbound_socket
-    return Tuple.new from_establish, command_type, destination_address
+
+    Tuple.new from_establish, command_type, destination_address
   end
 
   def establish!(session : Session, from_establish : Frames::Establish, sync_create_outbound_socket : Bool = true) : Bool

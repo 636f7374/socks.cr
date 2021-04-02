@@ -75,21 +75,20 @@ class SOCKS::ConnectionPool
     inactive_entry_cleanup
 
     @mutex.synchronize do
-      begin
-        object_id, entry = entries.first
-      rescue ex
-        return nil
+      loop do
+        break unless entries_first = entries.first?
+
+        object_id, entry = entries_first
+        entries.delete object_id
+
+        if clearInterval <= (Time.local - entry.createdAt)
+          entry.transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
+
+          next
+        end
+
+        break entry.transfer
       end
-
-      entries.delete object_id
-
-      if clearInterval <= (Time.local - entry.createdAt)
-        entry.transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
-
-        return
-      end
-
-      entry.transfer
     end
   end
 
