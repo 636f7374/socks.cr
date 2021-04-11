@@ -238,7 +238,7 @@ class SOCKS::Session < IO
       user_name, delimiter, password = decoded_base64_user_name_password.rpartition ":"
       raise Exception.new String.build { |io| io << "Session.check_basic_proxy_authorization!: Your server expects authenticationFlag to be " << authentication << ", But the client HTTP::Headers[Proxy-Authorization] username or password is empty!" } if user_name.empty? || password.empty?
 
-      permission_type = server.wrapper_on_auth.try &.call(user_name, password) || Frames::PermissionFlag::Passed
+      permission_type = server.on_wrapper_auth.try &.call(user_name, password) || Frames::PermissionFlag::Passed
       raise Exception.new String.build { |io| io << "Session.check_basic_proxy_authorization!: Your server expects authenticationFlag to be " << authentication << ", But the client HTTP::Headers[Proxy-Authorization] onAuth callback returns Denied!" } if permission_type.denied?
     rescue ex
       response = HTTP::Client::Response.new status_code: 401_i32, body: nil, version: request.version, body_io: nil

@@ -48,12 +48,12 @@ class SOCKS::Server
     @wrapperAuthentication
   end
 
-  def wrapper_on_auth=(value : Proc(String?, String?, Frames::PermissionFlag))
-    @wrapperOnAuth = value
+  def on_wrapper_auth=(value : Proc(String?, String?, Frames::PermissionFlag))
+    @onWrapperAuth = value
   end
 
-  def wrapper_on_auth
-    @wrapperOnAuth
+  def on_wrapper_auth
+    @onWrapperAuth
   end
 
   def client_timeout=(value : TimeOut)

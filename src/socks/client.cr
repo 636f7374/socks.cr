@@ -169,8 +169,8 @@ class SOCKS::Client < IO
     in Frames::WebSocketAuthenticationFlag
       case _wrapper_authentication
       in .basic?
-        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.authenticate_frame is Nil!" } unless _authenticate_frame = authenticate_frame
-        headers["Proxy-Authorization"] = proxy_authorization = String.build { |io| io << "Basic" << " " << Base64.strict_encode(String.build { |_io| _io << _authenticate_frame.userName << ":" << _authenticate_frame.password }) }
+        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthenticateFrame is Nil!" } unless _wrapper_authenticate_frame = wrapper_authenticate_frame
+        headers["Proxy-Authorization"] = proxy_authorization = String.build { |io| io << "Basic" << " " << Base64.strict_encode(String.build { |_io| _io << _wrapper_authenticate_frame.userName << ":" << _wrapper_authenticate_frame.password }) }
       end
     in Nil
     end
