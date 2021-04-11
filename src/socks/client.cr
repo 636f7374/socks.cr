@@ -60,6 +60,22 @@ class SOCKS::Client < IO
     @authenticationMethods ||= Set{Frames::AuthenticationFlag::NoAuthentication}
   end
 
+  def wrapper_authentication=(value : Frames::WebSocketAuthenticationFlag)
+    @wrapperAuthentication = value
+  end
+
+  def wrapper_authentication
+    @wrapperAuthentication
+  end
+
+  def wrapper_authenticate_frame=(value : Frames::Authenticate)
+    @wrapperAuthenticateFrame = value
+  end
+
+  def wrapper_authenticate_frame
+    @wrapperAuthenticateFrame
+  end
+
   def read_timeout=(value : Int | Time::Span | Nil)
     _io = outbound
     _io.read_timeout = value if value if _io.responds_to? :read_timeout=
@@ -149,6 +165,16 @@ class SOCKS::Client < IO
   end
 
   private def upgrade_websocket!(host : String, port : Int32, path : String = "/", headers : HTTP::Headers = HTTP::Headers.new)
+    case _wrapper_authentication = wrapper_authentication
+    in Frames::WebSocketAuthenticationFlag
+      case _wrapper_authentication
+      in .basic?
+        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.authenticate_frame is Nil!" } unless _authenticate_frame = authenticate_frame
+        headers["Proxy-Authorization"] = proxy_authorization = String.build { |io| io << "Basic" << " " << Base64.strict_encode(String.build { |_io| _io << _authenticate_frame.userName << ":" << _authenticate_frame.password }) }
+      end
+    in Nil
+    end
+
     protocol = HTTP::WebSocket.handshake socket: outbound, host: host, port: port, path: path, headers: headers
     @outbound = Enhanced::WebSocket.new io: protocol, options: options
   end

@@ -60,6 +60,15 @@ abstract struct SOCKS::Frames
     Denied = 1_u8
   end
 
+  enum WebSocketAuthenticationFlag : UInt8
+    Basic = 1_u8
+  end
+
+  enum WrapperFlag : UInt8
+    None      = 0_u8
+    WebSocket = 1_u8
+  end
+
   {% for name in ["optional_size", "fragment_id"] %}
   def self.read_{{name.id}}!(io : IO, exception : Exception? = nil) : UInt8
     buffer = uninitialized UInt8[1_i32]

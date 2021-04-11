@@ -45,7 +45,7 @@ loop do
 
   spawn do
     begin
-      _session.process_upgrade!
+      _session.process_upgrade! server: server
       server.handshake! session: _session
       server.establish! session: _session
     rescue ex
