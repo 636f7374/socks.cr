@@ -41,12 +41,9 @@ client.authenticate_frame = authenticate_frame
 
 # Set wrapper authentication method.
 
-client.wrapper_authentication = SOCKS::Frames::WebSocketAuthenticationFlag::Basic
-authenticate_frame = SOCKS::Frames::Authenticate.new version: SOCKS::Frames::VersionFlag::V5, arType: SOCKS::ARType::Ask
-authenticate_frame.authenticationChoiceType = SOCKS::Frames::AuthenticationChoiceFlag::UserNamePassword
-authenticate_frame.userName = "admin"
-authenticate_frame.password = "abc123"
-client.wrapper_authenticate_frame = authenticate_frame
+client.wrapper_authorization = SOCKS::Frames::WebSocketAuthorizationFlag::Basic
+authorize_frame = SOCKS::Frames::Authorize.new authorizationType: SOCKS::Frames::WebSocketAuthorizationFlag::Basic, userName: "admin", password: "abc123"
+client.wrapper_authorize_frame = authorize_frame
 
 begin
   # Upgrade outbound to WebSocket, and handshake.

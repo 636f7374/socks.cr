@@ -62,7 +62,7 @@ abstract struct SOCKS::Frames
     Denied = 1_u8
   end
 
-  enum WebSocketAuthenticationFlag : UInt8
+  enum WebSocketAuthorizationFlag : UInt8
     Basic = 1_u8
   end
 
@@ -71,16 +71,16 @@ abstract struct SOCKS::Frames
     WebSocket = 1_u8
   end
 
-  def self.encode_sec_websocket_protocol_authentication(user_name : String, password : String) : String
-    authentication = Base64.strict_encode String.build { |_io| _io << user_name << ':' << password }
-    Base64AuthenticationMapping.each { |chars| authentication = authentication.gsub chars.first, chars.last }
+  def self.encode_sec_websocket_protocol_authorization(user_name : String, password : String) : String
+    authorization = Base64.strict_encode String.build { |_io| _io << user_name << ':' << password }
+    Base64AuthenticationMapping.each { |chars| authorization = authorization.gsub chars.first, chars.last }
 
-    authentication
+    authorization
   end
 
-  def self.decode_sec_websocket_protocol_authentication!(authentication : String) : String
-    Base64AuthenticationMapping.each { |chars| authentication = authentication.gsub chars.last, chars.first }
-    Base64.decode_string authentication
+  def self.decode_sec_websocket_protocol_authorization!(authorization : String) : String
+    Base64AuthenticationMapping.each { |chars| authorization = authorization.gsub chars.last, chars.first }
+    Base64.decode_string authorization
   end
 
   {% for name in ["optional_size", "fragment_id"] %}

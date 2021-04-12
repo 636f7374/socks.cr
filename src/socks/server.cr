@@ -40,12 +40,12 @@ class SOCKS::Server
     @onAuth
   end
 
-  def wrapper_authentication=(value : Frames::WebSocketAuthenticationFlag)
-    @wrapperAuthentication = value
+  def wrapper_authorization=(value : Frames::WebSocketAuthorizationFlag)
+    @wrapperAuthorization = value
   end
 
-  def wrapper_authentication
-    @wrapperAuthentication
+  def wrapper_authorization
+    @wrapperAuthorization
   end
 
   def on_wrapper_auth=(value : Proc(String?, String?, Frames::PermissionFlag))

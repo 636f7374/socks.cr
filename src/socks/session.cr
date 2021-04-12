@@ -204,7 +204,7 @@ class SOCKS::Session < IO
   private def upgrade_websocket!(server : Server) : HTTP::Request
     from_io_request = HTTP::Request.from_io io: inbound
     response, key, request = HTTP::WebSocket.check_request_validity! socket: inbound, request: from_io_request
-    check_authentication! server: server, request: request
+    check_authorization! server: server, request: request
     HTTP::WebSocket.accept! socket: inbound, response: response, key: key, request: request
 
     protocol = HTTP::WebSocket::Protocol.new io: inbound, masked: false, sync_close: true
@@ -213,20 +213,20 @@ class SOCKS::Session < IO
     request
   end
 
-  private def check_authentication!(server : Server, request : HTTP::Request)
-    case wrapper_authentication = server.wrapper_authentication
-    in Frames::WebSocketAuthenticationFlag
-      case wrapper_authentication
+  private def check_authorization!(server : Server, request : HTTP::Request)
+    case wrapper_authorization = server.wrapper_authorization
+    in Frames::WebSocketAuthorizationFlag
+      case wrapper_authorization
       in .basic?
-        check_basic_authentication! server: server, request: request, wrapper_authentication: wrapper_authentication
+        check_basic_authorization! server: server, request: request, wrapper_authorization: wrapper_authorization
       end
     in Nil
     end
   end
 
-  private def check_basic_authentication!(server : Server, request : HTTP::Request, wrapper_authentication : Frames::WebSocketAuthenticationFlag)
+  private def check_basic_authorization!(server : Server, request : HTTP::Request, wrapper_authorization : Frames::WebSocketAuthorizationFlag)
     begin
-      raise Exception.new String.build { |io| io << "Session.check_basic_authentication!: Server expects wrapperAuthenticationFlag to be " << wrapper_authentication << ", But the client HTTP::Headers is empty!" } unless request_headers = request.headers
+      raise Exception.new String.build { |io| io << "Session.check_basic_authorization!: Server expects wrapperAuthorizationFlag to be " << wrapper_authorization << ", But the client HTTP::Headers is empty!" } unless request_headers = request.headers
     rescue ex
       response = HTTP::Client::Response.new status_code: 407_i32, body: nil, version: request.version, body_io: nil
       response.to_io io: inbound rescue nil
@@ -234,14 +234,14 @@ class SOCKS::Session < IO
       raise ex
     end
 
-    if headers_authentication = request_headers["Authorization"]?
-      check_basic_authentication! server: server, wrapper_authentication: wrapper_authentication, request: request, value: headers_authentication
+    if headers_authorization = request_headers["Authorization"]?
+      check_basic_authorization! server: server, wrapper_authorization: wrapper_authorization, request: request, value: headers_authorization
 
       return
     end
 
     if headers_sec_websocket_protocol = request_headers["Sec-WebSocket-Protocol"]?
-      check_sec_websocket_protocol_authentication! server: server, wrapper_authentication: wrapper_authentication, request: request, value: headers_sec_websocket_protocol
+      check_sec_websocket_protocol_authorization! server: server, wrapper_authorization: wrapper_authorization, request: request, value: headers_sec_websocket_protocol
 
       return
     end
@@ -249,19 +249,19 @@ class SOCKS::Session < IO
     response = HTTP::Client::Response.new status_code: 407_i32, body: nil, version: request.version, body_io: nil
     response.to_io io: inbound rescue nil
 
-    raise Exception.new String.build { |io| io << "Session.check_basic_authentication!: Server expects wrapperAuthenticationFlag to be " << wrapper_authentication << ", But the client HTTP::Headers[Authorization] or HTTP::Headers[Sec-WebSocket-Protocol] does not exists!" }
+    raise Exception.new String.build { |io| io << "Session.check_basic_authorization!: Server expects wrapperAuthorizationFlag to be " << wrapper_authorization << ", But the client HTTP::Headers[Authorization] or HTTP::Headers[Sec-WebSocket-Protocol] does not exists!" }
   end
 
-  {% for authentication_type in ["basic", "sec_websocket_protocol"] %}
-  private def check_{{authentication_type.id}}_authentication!(server : Server, wrapper_authentication : Frames::WebSocketAuthenticationFlag, request : HTTP::Request, value : String) : Bool
-    {% if "basic" == authentication_type %}
-      authentication_headers_key = "Authorization"
+  {% for authorization_type in ["basic", "sec_websocket_protocol"] %}
+  private def check_{{authorization_type.id}}_authorization!(server : Server, wrapper_authorization : Frames::WebSocketAuthorizationFlag, request : HTTP::Request, value : String) : Bool
+    {% if "basic" == authorization_type %}
+      authorization_headers_key = "Authorization"
     {% else %}
-      authentication_headers_key = "Sec-WebSocket-Protocol"
+      authorization_headers_key = "Sec-WebSocket-Protocol"
     {% end %}
 
     begin
-      raise Exception.new String.build { |io| io << "Session.check_" << {{authentication_type.stringify}} << "_authentication!: Server expects wrapperAuthenticationFlag to be " << wrapper_authentication << ", But the client HTTP::Headers[" << authentication_headers_key << "] is empty!" } if value.empty?
+      raise Exception.new String.build { |io| io << "Session.check_" << {{authorization_type.stringify}} << "_authorization!: Server expects wrapperAuthorizationFlag to be " << wrapper_authorization << ", But the client HTTP::Headers[" << authorization_headers_key << "] is empty!" } if value.empty?
     rescue ex
       response = HTTP::Client::Response.new status_code: 407_i32, body: nil, version: request.version, body_io: nil
       response.to_io io: inbound rescue nil
@@ -270,29 +270,29 @@ class SOCKS::Session < IO
     end
 
     begin
-      {% if "basic" == authentication_type %}
-        authentication_type, delimiter, base64_user_name_password = value.rpartition ' '
+      {% if "basic" == authorization_type %}
+        authorization_type, delimiter, base64_user_name_password = value.rpartition ' '
       {% else %}
-        authentication_type, delimiter, base64_user_name_password = value.rpartition ", "
+        authorization_type, delimiter, base64_user_name_password = value.rpartition ", "
       {% end %}
 
-      raise Exception.new String.build { |io| io << "Session.check_" << {{authentication_type.stringify}} << "_authentication!: Server expects wrapperAuthenticationFlag to be " << wrapper_authentication << ", But the client HTTP::Headers[" << authentication_headers_key << "] authenticationType or Base64UserNamePassword is empty!" } if authentication_type.empty? || base64_user_name_password.empty?
-      raise Exception.new String.build { |io| io << "Session.check_" << {{authentication_type.stringify}} << "_authentication!: Server expects wrapperAuthenticationFlag to be " << wrapper_authentication << ", But the client HTTP::Headers[" << authentication_headers_key << "] type is not Basic! (" << authentication_type << ")" } unless "Basic" == authentication_type
+      raise Exception.new String.build { |io| io << "Session.check_" << {{authorization_type.stringify}} << "_authorization!: Server expects wrapperAuthorizationFlag to be " << wrapper_authorization << ", But the client HTTP::Headers[" << authorization_headers_key << "] authorizationType or Base64UserNamePassword is empty!" } if authorization_type.empty? || base64_user_name_password.empty?
+      raise Exception.new String.build { |io| io << "Session.check_" << {{authorization_type.stringify}} << "_authorization!: Server expects wrapperAuthorizationFlag to be " << wrapper_authorization << ", But the client HTTP::Headers[" << authorization_headers_key << "] type is not Basic! (" << authorization_type << ")" } unless "Basic" == authorization_type
 
-      {% if "basic" == authentication_type %}
+      {% if "basic" == authorization_type %}
         decoded_base64_user_name_password = Base64.decode_string base64_user_name_password rescue nil rescue nil
       {% else %}
-        decoded_base64_user_name_password = Frames.decode_sec_websocket_protocol_authentication! authentication: base64_user_name_password rescue nil
+        decoded_base64_user_name_password = Frames.decode_sec_websocket_protocol_authorization! authorization: base64_user_name_password rescue nil
       {% end %}
 
       decoded_base64_user_name_password = Base64.decode_string base64_user_name_password rescue nil rescue nil
-      raise Exception.new String.build { |io| io << "Session.check_" << {{authentication_type.stringify}} << "_authentication!: Server expects wrapperAuthenticationFlag to be " << wrapper_authentication << ", But the client HTTP::Headers[" << authentication_headers_key << "] Base64 decoding failed!" } unless decoded_base64_user_name_password
+      raise Exception.new String.build { |io| io << "Session.check_" << {{authorization_type.stringify}} << "_authorization!: Server expects wrapperAuthorizationFlag to be " << wrapper_authorization << ", But the client HTTP::Headers[" << authorization_headers_key << "] Base64 decoding failed!" } unless decoded_base64_user_name_password
 
       user_name, delimiter, password = decoded_base64_user_name_password.rpartition ':'
-      raise Exception.new String.build { |io| io << "Session.check_" << {{authentication_type.stringify}} << "_authentication!: Server expects wrapperAuthenticationFlag to be " << wrapper_authentication << ", But the client HTTP::Headers[" << authentication_headers_key << "] username or password is empty!" } if user_name.empty? || password.empty?
+      raise Exception.new String.build { |io| io << "Session.check_" << {{authorization_type.stringify}} << "_authorization!: Server expects wrapperAuthorizationFlag to be " << wrapper_authorization << ", But the client HTTP::Headers[" << authorization_headers_key << "] username or password is empty!" } if user_name.empty? || password.empty?
 
       permission_type = server.on_wrapper_auth.try &.call(user_name, password) || Frames::PermissionFlag::Passed
-      raise Exception.new String.build { |io| io << "Session.check_" << {{authentication_type.stringify}} << "_authentication!: Server expects wrapperAuthenticationFlag to be " << wrapper_authentication << ", But the client HTTP::Headers[" << authentication_headers_key << "] onAuth callback returns Denied!" } if permission_type.denied?
+      raise Exception.new String.build { |io| io << "Session.check_" << {{authorization_type.stringify}} << "_authorization!: Server expects wrapperAuthorizationFlag to be " << wrapper_authorization << ", But the client HTTP::Headers[" << authorization_headers_key << "] onAuth callback returns Denied!" } if permission_type.denied?
     rescue ex
       response = HTTP::Client::Response.new status_code: 401_i32, body: nil, version: request.version, body_io: nil
       response.to_io io: inbound rescue nil

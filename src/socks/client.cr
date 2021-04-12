@@ -60,20 +60,20 @@ class SOCKS::Client < IO
     @authenticationMethods ||= Set{Frames::AuthenticationFlag::NoAuthentication}
   end
 
-  def wrapper_authentication=(value : Frames::WebSocketAuthenticationFlag)
-    @wrapperAuthentication = value
+  def wrapper_authorization=(value : Frames::WebSocketAuthorizationFlag)
+    @wrapperAuthorization = value
   end
 
-  def wrapper_authentication
-    @wrapperAuthentication
+  def wrapper_authorization
+    @wrapperAuthorization
   end
 
-  def wrapper_authenticate_frame=(value : Frames::Authenticate)
-    @wrapperAuthenticateFrame = value
+  def wrapper_authorize_frame=(value : Frames::Authorize)
+    @wrapperAuthorizeFrame = value
   end
 
-  def wrapper_authenticate_frame
-    @wrapperAuthenticateFrame
+  def wrapper_authorize_frame
+    @wrapperAuthorizeFrame
   end
 
   def read_timeout=(value : Int | Time::Span | Nil)
@@ -165,16 +165,16 @@ class SOCKS::Client < IO
   end
 
   private def upgrade_websocket!(host : String, port : Int32, path : String = "/", headers : HTTP::Headers = HTTP::Headers.new)
-    case _wrapper_authentication = wrapper_authentication
-    in Frames::WebSocketAuthenticationFlag
-      case _wrapper_authentication
+    case _wrapper_authorization = wrapper_authorization
+    in Frames::WebSocketAuthorizationFlag
+      case _wrapper_authorization
       in .basic?
-        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthenticateFrame is Nil!" } unless _wrapper_authenticate_frame = wrapper_authenticate_frame
-        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthenticateFrame.userName is Nil!" } unless _wrapper_authenticate_frame_user_name = _wrapper_authenticate_frame.userName
-        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthenticateFrame.password is Nil!" } unless _wrapper_authenticate_frame_password = _wrapper_authenticate_frame.password
+        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthorizeFrame is Nil!" } unless _wrapper_authorize_frame = wrapper_authorize_frame
+        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthorizeFrame.userName is Nil!" } unless _wrapper_authorize_frame_user_name = _wrapper_authorize_frame.userName
+        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthorizeFrame.password is Nil!" } unless _wrapper_authorize_frame_password = _wrapper_authorize_frame.password
 
-        headers["Authorization"] = String.build { |io| io << "Basic" << ' ' << Base64.strict_encode(String.build { |_io| _io << _wrapper_authenticate_frame_user_name << ':' << _wrapper_authenticate_frame_password }) }
-        headers["Sec-WebSocket-Protocol"] = String.build { |io| io << "Basic" << ", " << Frames.encode_sec_websocket_protocol_authentication(user_name: _wrapper_authenticate_frame_user_name, password: _wrapper_authenticate_frame_password) }
+        headers["Authorization"] = String.build { |io| io << "Basic" << ' ' << Base64.strict_encode(String.build { |_io| _io << _wrapper_authorize_frame_user_name << ':' << _wrapper_authorize_frame_password }) }
+        headers["Sec-WebSocket-Protocol"] = String.build { |io| io << "Basic" << ", " << Frames.encode_sec_websocket_protocol_authorization(user_name: _wrapper_authorize_frame_user_name, password: _wrapper_authorize_frame_password) }
       end
     in Nil
     end

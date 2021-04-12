@@ -39,7 +39,7 @@ server.on_auth = ->(user_name : String?, password : String?) do
   SOCKS::Frames::PermissionFlag::Passed
 end
 
-server.wrapper_authentication = SOCKS::Frames::WebSocketAuthenticationFlag::Basic
+server.wrapper_authorization = SOCKS::Frames::WebSocketAuthorizationFlag::Basic
 server.on_wrapper_auth = ->(user_name : String?, password : String?) do
   return SOCKS::Frames::PermissionFlag::Denied unless _user_name = user_name
   return SOCKS::Frames::PermissionFlag::Denied if "admin" != _user_name
