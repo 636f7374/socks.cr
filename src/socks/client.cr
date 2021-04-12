@@ -174,7 +174,6 @@ class SOCKS::Client < IO
         raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthorizeFrame.password is Nil!" } unless _wrapper_authorize_frame_password = _wrapper_authorize_frame.password
 
         headers["Authorization"] = String.build { |io| io << "Basic" << ' ' << Base64.strict_encode(String.build { |_io| _io << _wrapper_authorize_frame_user_name << ':' << _wrapper_authorize_frame_password }) }
-        headers["Sec-WebSocket-Protocol"] = String.build { |io| io << "Basic" << ", " << Frames.encode_sec_websocket_protocol_authorization(user_name: _wrapper_authorize_frame_user_name, password: _wrapper_authorize_frame_password) }
       end
     in Nil
     end

@@ -204,7 +204,8 @@ class SOCKS::Session < IO
   private def upgrade_websocket!(server : Server) : HTTP::Request
     from_io_request = HTTP::Request.from_io io: inbound
     response, key, request = HTTP::WebSocket.check_request_validity! socket: inbound, request: from_io_request
-    check_authorization! server: server, request: request
+
+    check_authorization! server: server, request: request, response: response
     HTTP::WebSocket.accept! socket: inbound, response: response, key: key, request: request
 
     protocol = HTTP::WebSocket::Protocol.new io: inbound, masked: false, sync_close: true
@@ -213,18 +214,18 @@ class SOCKS::Session < IO
     request
   end
 
-  private def check_authorization!(server : Server, request : HTTP::Request)
+  private def check_authorization!(server : Server, request : HTTP::Request, response : HTTP::Server::Response)
     case wrapper_authorization = server.wrapper_authorization
     in Frames::WebSocketAuthorizationFlag
       case wrapper_authorization
       in .basic?
-        check_basic_authorization! server: server, request: request, wrapper_authorization: wrapper_authorization
+        check_basic_authorization! server: server, wrapper_authorization: wrapper_authorization, request: request, response: response
       end
     in Nil
     end
   end
 
-  private def check_basic_authorization!(server : Server, request : HTTP::Request, wrapper_authorization : Frames::WebSocketAuthorizationFlag)
+  private def check_basic_authorization!(server : Server, wrapper_authorization : Frames::WebSocketAuthorizationFlag, request : HTTP::Request, response : HTTP::Server::Response)
     begin
       raise Exception.new String.build { |io| io << "Session.check_basic_authorization!: Server expects wrapperAuthorizationFlag to be " << wrapper_authorization << ", But the client HTTP::Headers is empty!" } unless request_headers = request.headers
     rescue ex
@@ -235,13 +236,13 @@ class SOCKS::Session < IO
     end
 
     if headers_authorization = request_headers["Authorization"]?
-      check_basic_authorization! server: server, wrapper_authorization: wrapper_authorization, request: request, value: headers_authorization
+      check_basic_authorization! server: server, wrapper_authorization: wrapper_authorization, request: request, response: response, value: headers_authorization
 
       return
     end
 
     if headers_sec_websocket_protocol = request_headers["Sec-WebSocket-Protocol"]?
-      check_sec_websocket_protocol_authorization! server: server, wrapper_authorization: wrapper_authorization, request: request, value: headers_sec_websocket_protocol
+      check_sec_websocket_protocol_authorization! server: server, wrapper_authorization: wrapper_authorization, request: request, response: response, value: headers_sec_websocket_protocol
 
       return
     end
@@ -253,7 +254,7 @@ class SOCKS::Session < IO
   end
 
   {% for authorization_type in ["basic", "sec_websocket_protocol"] %}
-  private def check_{{authorization_type.id}}_authorization!(server : Server, wrapper_authorization : Frames::WebSocketAuthorizationFlag, request : HTTP::Request, value : String) : Bool
+  private def check_{{authorization_type.id}}_authorization!(server : Server, wrapper_authorization : Frames::WebSocketAuthorizationFlag, request : HTTP::Request, response : HTTP::Server::Response, value : String) : Bool
     {% if "basic" == authorization_type %}
       authorization_headers_key = "Authorization"
     {% else %}
@@ -299,6 +300,10 @@ class SOCKS::Session < IO
 
       raise ex
     end
+
+    {% if "sec_websocket_protocol" == authorization_type %}
+      response.headers["Sec-WebSocket-Protocol"] = authorization_type
+    {% end %}
 
     true
   end

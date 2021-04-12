@@ -37,7 +37,6 @@ class HTTP::WebSocket
   end
 
   def self.accept!(socket : IO, response : HTTP::Server::Response, key : String, request : HTTP::Request) : HTTP::Request
-    response = HTTP::Server::Response.new io: socket
     accept_code = WebSocket::Protocol.key_challenge key
 
     response.status = :switching_protocols
