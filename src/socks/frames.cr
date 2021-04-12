@@ -1,4 +1,6 @@
 abstract struct SOCKS::Frames
+  Base64AuthenticationMapping = Set{['+', '!'], ['/', '%'], ['=', '#'], ['.', '$'], ['_', '&']}
+
   enum AuthenticationFlag : UInt8
     NoAuthentication                         =   0_u8
     GSSAPI                                   =   1_u8
@@ -67,6 +69,18 @@ abstract struct SOCKS::Frames
   enum WrapperFlag : UInt8
     None      = 0_u8
     WebSocket = 1_u8
+  end
+
+  def self.encode_sec_websocket_protocol_authentication(user_name : String, password : String) : String
+    authentication = Base64.strict_encode String.build { |_io| _io << user_name << ':' << password }
+    Base64AuthenticationMapping.each { |chars| authentication = authentication.gsub chars.first, chars.last }
+
+    authentication
+  end
+
+  def self.decode_sec_websocket_protocol_authentication!(authentication : String) : String
+    Base64AuthenticationMapping.each { |chars| authentication = authentication.gsub chars.last, chars.first }
+    Base64.decode_string authentication
   end
 
   {% for name in ["optional_size", "fragment_id"] %}

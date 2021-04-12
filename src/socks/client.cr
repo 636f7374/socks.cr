@@ -170,7 +170,11 @@ class SOCKS::Client < IO
       case _wrapper_authentication
       in .basic?
         raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthenticateFrame is Nil!" } unless _wrapper_authenticate_frame = wrapper_authenticate_frame
-        headers["Proxy-Authorization"] = proxy_authorization = String.build { |io| io << "Basic" << " " << Base64.strict_encode(String.build { |_io| _io << _wrapper_authenticate_frame.userName << ":" << _wrapper_authenticate_frame.password }) }
+        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthenticateFrame.userName is Nil!" } unless _wrapper_authenticate_frame_user_name = _wrapper_authenticate_frame.userName
+        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthenticateFrame.password is Nil!" } unless _wrapper_authenticate_frame_password = _wrapper_authenticate_frame.password
+
+        headers["Authorization"] = String.build { |io| io << "Basic" << ' ' << Base64.strict_encode(String.build { |_io| _io << _wrapper_authenticate_frame_user_name << ':' << _wrapper_authenticate_frame_password }) }
+        headers["Sec-WebSocket-Protocol"] = String.build { |io| io << "Basic" << ", " << Frames.encode_sec_websocket_protocol_authentication(user_name: _wrapper_authenticate_frame_user_name, password: _wrapper_authenticate_frame_password) }
       end
     in Nil
     end
