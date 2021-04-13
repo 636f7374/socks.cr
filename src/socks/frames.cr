@@ -72,10 +72,15 @@ abstract struct SOCKS::Frames
   end
 
   def self.encode_sec_websocket_protocol_authorization(user_name : String, password : String) : String
-    authorization = Base64.strict_encode String.build { |_io| _io << user_name << ':' << password }
-    Base64AuthenticationMapping.each { |chars| authorization = authorization.gsub chars.first, chars.last }
+    authorization = String.build { |_io| _io << user_name << ':' << password }
+    encode_sec_websocket_protocol_authorization value: authorization
+  end
 
-    authorization
+  def self.encode_sec_websocket_protocol_authorization(value : String) : String
+    value = Base64.strict_encode value
+    Base64AuthenticationMapping.each { |chars| value = value.gsub chars.first, chars.last }
+
+    value
   end
 
   def self.decode_sec_websocket_protocol_authorization!(authorization : String) : String
