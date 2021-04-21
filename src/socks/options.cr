@@ -38,9 +38,11 @@ struct SOCKS::Options
     abstract struct Wrapper
       struct WebSocket < Wrapper
         property address : Address
-        property path : String
+        property resources : String
+        property headers : HTTP::Headers
+        property dataRaw : String?
 
-        def initialize(@address : Address, @path : String)
+        def initialize(@address : Address, @resources : String, @headers : HTTP::Headers, @dataRaw : String?)
         end
       end
     end

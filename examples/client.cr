@@ -11,7 +11,7 @@ dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 # Create SOCKS::Options.
 
 options = SOCKS::Options.new
-options.client.wrapper = SOCKS::Options::Client::Wrapper::WebSocket.new address: SOCKS::Address.new(host: "0.0.0.0", port: 1234_i32), path: "/"
+options.client.wrapper = SOCKS::Options::Client::Wrapper::WebSocket.new address: SOCKS::Address.new(host: "0.0.0.0", port: 1234_i32), resources: "/", headers: HTTP::Headers.new, dataRaw: nil
 options.switcher.allowWebSocketKeepAlive = true
 options.switcher.allowTCPBinding = true
 options.switcher.allowAssociateUDP = true
