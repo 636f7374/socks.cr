@@ -158,13 +158,13 @@ class SOCKS::Client < IO
 
     case _wrapper
     in SOCKS::Options::Client::Wrapper::WebSocket
-      upgrade_websocket! host: _wrapper.address.host, port: _wrapper.address.port, resources: _wrapper.resources, headers: _wrapper.headers.dup, data_raw: _wrapper.dataRaw
+      upgrade_websocket! host: _wrapper.address.host, port: _wrapper.address.port, resource: _wrapper.resource, headers: _wrapper.headers.dup, data_raw: _wrapper.dataRaw
     in SOCKS::Options::Client::Wrapper
     in Nil
     end
   end
 
-  private def upgrade_websocket!(host : String, port : Int32, resources : String = "/", headers : HTTP::Headers = HTTP::Headers.new, data_raw : String? = nil)
+  private def upgrade_websocket!(host : String, port : Int32, resource : String = "/", headers : HTTP::Headers = HTTP::Headers.new, data_raw : String? = nil)
     case _wrapper_authorization = wrapper_authorization
     in Frames::WebSocketAuthorizationFlag
       case _wrapper_authorization
@@ -178,7 +178,7 @@ class SOCKS::Client < IO
     in Nil
     end
 
-    protocol = HTTP::WebSocket.handshake socket: outbound, host: host, port: port, resources: resources, headers: headers, data_raw: data_raw
+    protocol = HTTP::WebSocket.handshake socket: outbound, host: host, port: port, resource: resource, headers: headers, data_raw: data_raw
     @outbound = Enhanced::WebSocket.new io: protocol, options: options
   end
 
