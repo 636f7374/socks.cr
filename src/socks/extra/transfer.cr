@@ -6,8 +6,8 @@ class Transfer
 
   property source : IO
   property destination : IO
-  getter callback : Proc(Transfer, UInt64, UInt64, Nil)?
-  getter heartbeatCallback : Proc(Transfer, Nil)?
+  property callback : Proc(Transfer, UInt64, UInt64, Nil)?
+  property heartbeatCallback : Proc(Transfer, Nil)?
   getter firstAliveTime : Time?
   getter latestAliveTime : Time?
   getter sentStatus : Atomic(Int8)
