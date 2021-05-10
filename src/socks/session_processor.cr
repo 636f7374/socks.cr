@@ -104,7 +104,7 @@ class SOCKS::SessionProcessor
     transfer.heartbeatInterval = session.options.session.heartbeatInterval
     transfer.aliveInterval = session.options.session.aliveInterval
 
-    return unless transfer.destination.is_a? Quirks::Server::UDPOutbound
+    return unless transfer.destination.is_a? Layer::Server::UDPOutbound
     transfer.aliveInterval = session.options.session.udpAliveInterval
   end
 

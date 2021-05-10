@@ -1,4 +1,4 @@
-module SOCKS::Quirks
+module SOCKS::Layer
   module Client
     class AssociateUDP < IO
       property io : UDPSocket

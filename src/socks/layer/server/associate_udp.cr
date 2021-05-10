@@ -1,4 +1,4 @@
-module SOCKS::Quirks
+module SOCKS::Layer
   module Server
     class AssociateUDP < IO
       getter io : UDPSocket

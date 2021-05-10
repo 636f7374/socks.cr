@@ -241,7 +241,7 @@ class SOCKS::Server
       bind_socket_local_address, bind_socket = tuple_bind_socket
       session.holding = bind_socket
 
-      raise Exception.new "Server.establish!: Server.create_bind_socket (TCPBinding) type is not Quirks::Server::TCPBinding." unless bind_socket.is_a? Quirks::Server::TCPBinding
+      raise Exception.new "Server.establish!: Server.create_bind_socket (TCPBinding) type is not Layer::Server::TCPBinding." unless bind_socket.is_a? Layer::Server::TCPBinding
     in .associate_udp?
       unless tuple_bind_socket
         send_establish_frame session: session, status_flag: Frames::StatusFlag::NetworkUnreachable, destination_ip_address: nil
@@ -251,7 +251,7 @@ class SOCKS::Server
       bind_socket_local_address, bind_socket = tuple_bind_socket
       session.holding = bind_socket
 
-      raise Exception.new "Server.establish!: Server.create_bind_socket (AssociateUDP) type is not Quirks::Server::AssociateUDP." unless bind_socket.is_a? Quirks::Server::AssociateUDP
+      raise Exception.new "Server.establish!: Server.create_bind_socket (AssociateUDP) type is not Layer::Server::AssociateUDP." unless bind_socket.is_a? Layer::Server::AssociateUDP
     end
 
     # Send Establish Status
@@ -289,12 +289,12 @@ class SOCKS::Server
 
       if command_type.associate_udp? && sync_create_outbound_socket
         _outbound = outbound_socket
-        raise Exception.new "Server.establish!: Server.create_bind_socket (AssociateUDP) type is not Quirks::Server::AssociateUDP." unless _outbound.is_a? UDPSocket
-        session.outbound = Quirks::Server::UDPOutbound.new io: _outbound, timeout: udp_outbound_timeout
+        raise Exception.new "Server.establish!: Server.create_bind_socket (AssociateUDP) type is not Layer::Server::AssociateUDP." unless _outbound.is_a? UDPSocket
+        session.outbound = Layer::Server::UDPOutbound.new io: _outbound, timeout: udp_outbound_timeout
       end
 
       if command_type.tcp_binding?
-        raise Exception.new "Server.establish!: Server.create_bind_socket (TCPBinding) type is not Quirks::Server::TCPBinding." unless bind_socket.is_a? Quirks::Server::TCPBinding
+        raise Exception.new "Server.establish!: Server.create_bind_socket (TCPBinding) type is not Layer::Server::TCPBinding." unless bind_socket.is_a? Layer::Server::TCPBinding
 
         bind_socket.accept?
         bind_socket.read_timeout = tcp_binding_timeout.read
@@ -340,7 +340,7 @@ class SOCKS::Server
     true
   end
 
-  private def create_bind_socket(session : Session, command_type : Frames::CommandFlag, tcp_timeout : TimeOut = TimeOut.new, udp_timeout : TimeOut = TimeOut.udp_default) : Tuple(Socket::IPAddress?, Quirks::Server::TCPBinding | Quirks::Server::AssociateUDP)?
+  private def create_bind_socket(session : Session, command_type : Frames::CommandFlag, tcp_timeout : TimeOut = TimeOut.new, udp_timeout : TimeOut = TimeOut.udp_default) : Tuple(Socket::IPAddress?, Layer::Server::TCPBinding | Layer::Server::AssociateUDP)?
     case command_type
     in .tcp_connection?
     in .tcp_binding?
@@ -350,7 +350,7 @@ class SOCKS::Server
     end
   end
 
-  private def create_tcp_bind_socket(session : Session, timeout : TimeOut = TimeOut.udp_default) : Tuple(Socket::IPAddress?, Quirks::Server::TCPBinding)
+  private def create_tcp_bind_socket(session : Session, timeout : TimeOut = TimeOut.udp_default) : Tuple(Socket::IPAddress?, Layer::Server::TCPBinding)
     session_local_address = session.local_address rescue nil if session.responds_to? :local_address
 
     unless session_local_address
@@ -381,11 +381,11 @@ class SOCKS::Server
       raise ex
     end
 
-    socket = Quirks::Server::TCPBinding.new server: socket, timeout: timeout
+    socket = Layer::Server::TCPBinding.new server: socket, timeout: timeout
     Tuple.new (socket.server_local_address rescue nil), socket
   end
 
-  private def create_udp_bind_socket(session : Session, timeout : TimeOut = TimeOut.udp_default) : Tuple(Socket::IPAddress?, Quirks::Server::AssociateUDP)
+  private def create_udp_bind_socket(session : Session, timeout : TimeOut = TimeOut.udp_default) : Tuple(Socket::IPAddress?, Layer::Server::AssociateUDP)
     session_local_address = session.local_address rescue nil if session.responds_to? :local_address
 
     unless session_local_address
@@ -417,7 +417,7 @@ class SOCKS::Server
       raise ex
     end
 
-    socket = Quirks::Server::AssociateUDP.new io: socket, timeout: timeout
+    socket = Layer::Server::AssociateUDP.new io: socket, timeout: timeout
     Tuple.new (socket.local_address rescue nil), socket
   end
 
@@ -466,4 +466,4 @@ class SOCKS::Server
 end
 
 require "./enhanced/*"
-require "./quirks/server/*"
+require "./layer/server/*"
