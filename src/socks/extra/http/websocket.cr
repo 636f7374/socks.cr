@@ -51,7 +51,7 @@ class HTTP::WebSocket
   def self.handshake(socket : IO, host : String, port : Int32, resource : String = "/", headers : HTTP::Headers = HTTP::Headers.new, data_raw : String? = nil) : Protocol
     random_key = Base64.strict_encode StaticArray(UInt8, 16_i32).new { rand(256_i32).to_u8 }
 
-    headers["Host"] = String.build { |io| io << host << ":" << port }
+    headers["Host"] = headers["Host"]? || String.build { |io| io << host << ':' << port }
     headers["Connection"] = "Upgrade"
     headers["Upgrade"] = "websocket"
     headers["Sec-WebSocket-Version"] = Protocol::VERSION
@@ -59,7 +59,7 @@ class HTTP::WebSocket
 
     resource = "/" if resource.empty?
     handshake = HTTP::Request.new method: "GET", resource: resource, headers: headers, body: data_raw
-    handshake.to_io socket
+    handshake.to_io io: socket
     socket.flush
 
     handshake_response = HTTP::Client::Response.from_io io: socket

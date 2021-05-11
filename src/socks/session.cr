@@ -203,6 +203,10 @@ class SOCKS::Session < IO
 
   private def upgrade_websocket!(server : Server) : HTTP::Request
     request = HTTP::Request.from_io io: inbound
+    upgrade_websocket! request: request, server: server
+  end
+
+  private def upgrade_websocket!(request : HTTP::Request | HTTP::Status | Nil, server : Server) : HTTP::Request
     response, key, request = HTTP::WebSocket.check_request_validity! socket: inbound, request: request
 
     check_authorization! server: server, request: request, response: response
