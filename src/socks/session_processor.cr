@@ -97,10 +97,10 @@ class SOCKS::SessionProcessor
     # This function is used as an overridable.
     # E.g. SessionID.
 
-    set_transfer_options! transfer: transfer
+    __set_transfer_options transfer: transfer
   end
 
-  private def set_transfer_options!(transfer : Transfer)
+  private def __set_transfer_options(transfer : Transfer)
     transfer.heartbeatInterval = session.options.session.heartbeatInterval
     transfer.aliveInterval = session.options.session.aliveInterval
 
