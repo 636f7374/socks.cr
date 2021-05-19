@@ -310,6 +310,12 @@ class SOCKS::Server
   end
 
   private def check_destination_protection!(destination_address : Address | Socket::IPAddress) : Bool
+    # This function is used as an overridable.
+
+    __check_destination_protection! destination_address: destination_address
+  end
+
+  private def __check_destination_protection!(destination_address : Address | Socket::IPAddress) : Bool
     return true unless destination_protection = options.server.destinationProtection
 
     case destination_address
@@ -322,7 +328,7 @@ class SOCKS::Server
     case destination_address
     in Address
       if destination_protection.addresses.find { |protection_address| (protection_address.host == destination_address.host) && (protection_address.port == destination_address.port) }
-        raise Exception.new "Server.check_destination_protection!: Establish.destinationAddress is in your preset destinationProtection!"
+        raise Exception.new "Server.__check_destination_protection!: Establish.destinationAddress is in your preset destinationProtection!"
       end
     in Socket::IPAddress
       server_local_address = io.local_address
@@ -330,11 +336,11 @@ class SOCKS::Server
       case server_local_address
       in Socket::UNIXAddress
       in Socket::IPAddress
-        raise Exception.new "Server.check_destination_protection!: Establish.destinationAddress conflicts with your server address!" if InterfaceAddress.includes? ip_address: destination_address, interface_port: server_local_address.port
+        raise Exception.new "Server.__check_destination_protection!: Establish.destinationAddress conflicts with your server address!" if InterfaceAddress.includes? ip_address: destination_address, interface_port: server_local_address.port
       in Socket::Address
       end
 
-      raise Exception.new "Server.check_destination_protection!: Establish.destinationAddress is in your preset destinationProtection!" if destination_protection.ipAddresses.includes? destination_address
+      raise Exception.new "Server.__check_destination_protection!: Establish.destinationAddress is in your preset destinationProtection!" if destination_protection.ipAddresses.includes? destination_address
     end
 
     true
