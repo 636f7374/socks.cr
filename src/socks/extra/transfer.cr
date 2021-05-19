@@ -12,8 +12,8 @@ class Transfer
   getter latestAliveTime : Time?
   getter sentStatus : Atomic(Int8)
   getter receivedStatus : Atomic(Int8)
-  getter sentSize : Atomic(UInt64)
-  getter receivedSize : Atomic(UInt64)
+  getter sentBytes : Atomic(UInt64)
+  getter receivedBytes : Atomic(UInt64)
   getter heartbeatCounter : Atomic(UInt64)
   property heartbeatInterval : Time::Span
   property aliveInterval : Time::Span
@@ -27,8 +27,8 @@ class Transfer
     @latestAliveTime = nil
     @sentStatus = Atomic(Int8).new -1_i8
     @receivedStatus = Atomic(Int8).new -1_i8
-    @sentSize = Atomic(UInt64).new 0_u64
-    @receivedSize = Atomic(UInt64).new 0_u64
+    @sentBytes = Atomic(UInt64).new 0_u64
+    @receivedBytes = Atomic(UInt64).new 0_u64
     @heartbeatCounter = Atomic(UInt64).new 0_u64
     @heartbeatInterval = 3_i32.seconds
     @aliveInterval = 1_i32.minutes
@@ -214,8 +214,8 @@ class Transfer
       @latestAliveTime = nil
       @sentStatus.set -1_i8
       @receivedStatus.set -1_i8
-      @sentSize.set 0_u64
-      @receivedSize.set 0_u64
+      @sentBytes.set 0_u64
+      @receivedBytes.set 0_u64
       @heartbeatCounter.set 0_u64
       @extraSentSize = 0_u64
       @extraReceivedSize = 0_u64
@@ -237,7 +237,7 @@ class Transfer
         copy_size = begin
           IO.yield_copy src: source, dst: destination do |count, length|
             self.latest_alive_time = Time.local
-            @sentSize.add(length.to_u64) rescue 0_u64
+            @sentBytes.add(length.to_u64) rescue 0_u64
           end
         rescue ex : IO::CopyException
           exception = ex.cause
@@ -252,7 +252,7 @@ class Transfer
         break
       end
 
-      @sentSize.add(extraSentSize) rescue nil
+      @sentBytes.add(extraSentSize) rescue nil
       @sentStatus.set 0_u64
     end
 
@@ -264,7 +264,7 @@ class Transfer
         copy_size = begin
           IO.yield_copy src: destination, dst: source do |count, length|
             self.latest_alive_time = Time.local
-            @receivedSize.add(length.to_u64) rescue 0_u64
+            @receivedBytes.add(length.to_u64) rescue 0_u64
           end
         rescue ex : IO::CopyException
           exception = ex.cause
@@ -279,16 +279,16 @@ class Transfer
         break
       end
 
-      @receivedSize.add(extraReceivedSize) rescue nil
+      @receivedBytes.add(extraReceivedSize) rescue nil
       @receivedStatus.set 0_u64
     end
 
     mixed_fiber = spawn do
       loop do
-        _sent_size, _received_size = Tuple.new sentSize.get, receivedSize.get
+        _sent_bytes, _received_bytes = Tuple.new sentBytes.get, receivedBytes.get
 
         if sent_done? || receive_done?
-          callback.try &.call self, _sent_size, _received_size
+          callback.try &.call self, _sent_bytes, _received_bytes
 
           break
         end
