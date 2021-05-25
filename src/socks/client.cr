@@ -11,7 +11,7 @@ class SOCKS::Client < IO
   end
 
   def self.new(host : String, port : Int32, dns_resolver : DNS::Resolver, options : Options, timeout : TimeOut = TimeOut.new)
-    socket = TCPSocket.new host: host, port: port, dns_resolver: dns_resolver, connect_timeout: timeout.connect
+    socket = TCPSocket.new host: host, port: port, dns_resolver: dns_resolver, delegator: nil, connect_timeout: timeout.connect
 
     socket.read_timeout = timeout.read
     socket.write_timeout = timeout.write
@@ -314,7 +314,7 @@ class SOCKS::Client < IO
       case destination_address
       in Socket::IPAddress
       in Address
-        fetch_type, ip_addresses = dnsResolver.getaddrinfo host: destination_address.host, port: destination_address.port
+        delegator, fetch_type, ip_addresses = dnsResolver.getaddrinfo host: destination_address.host, port: destination_address.port
         destination_address = ip_addresses.first
       end
     end
