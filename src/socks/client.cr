@@ -11,7 +11,7 @@ class SOCKS::Client < IO
   end
 
   def self.new(host : String, port : Int32, dns_resolver : DNS::Resolver, options : Options, timeout : TimeOut = TimeOut.new)
-    socket = TCPSocket.new host: host, port: port, dns_resolver: dns_resolver, delegator: nil, connect_timeout: timeout.connect
+    socket = TCPSocket.new host: host, port: port, dns_resolver: dns_resolver, connect_timeout: timeout.connect, delegator: nil
 
     socket.read_timeout = timeout.read
     socket.write_timeout = timeout.write
