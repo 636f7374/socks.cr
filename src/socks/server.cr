@@ -221,7 +221,7 @@ class SOCKS::Server
         outbound_socket_remote_address = outbound_socket.remote_address rescue nil
       rescue ex
         send_establish_frame session: session, status_flag: Frames::StatusFlag::ConnectFailed, destination_ip_address: nil
-        raise Exception.new String.build { |io| io << "Server.establish!: " << ex.message << "." }
+        raise Exception.new String.build { |io| io << "Server.establish!: " << ex.message << '.' }
       end
     end
 
