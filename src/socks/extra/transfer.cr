@@ -19,7 +19,7 @@ class Transfer
   property aliveInterval : Time::Span
   property extraSentSize : UInt64
   property extraReceivedSize : UInt64
-  getter concurrentFibers : Array(Fiber)
+  getter concurrentFibers : Set(Fiber)
   getter concurrentMutex : Mutex
 
   def initialize(@source : IO, @destination : IO, @callback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Nil)? = nil)
@@ -34,7 +34,7 @@ class Transfer
     @aliveInterval = 1_i32.minutes
     @extraSentSize = 0_u64
     @extraReceivedSize = 0_u64
-    @concurrentFibers = [] of Fiber
+    @concurrentFibers = Set(Fiber).new
     @concurrentMutex = Mutex.new :unchecked
   end
 

@@ -54,11 +54,11 @@ module SOCKS
   def self.create_outbound_socket(command_type : Frames::CommandFlag, destination_address : Address, dns_resolver : DNS::Resolver, tcp_timeout : TimeOut = TimeOut.new, udp_timeout : TimeOut = TimeOut.udp_default) : ::IPSocket
     case command_type
     in .tcp_connection?
-      socket = TCPSocket.new host: destination_address.host, port: destination_address.port, dns_resolver: dns_resolver, connect_timeout: tcp_timeout.connect, delegator: nil
+      socket = TCPSocket.new host: destination_address.host, port: destination_address.port, dns_resolver: dns_resolver, connect_timeout: tcp_timeout.connect, caller: nil
       socket.read_timeout = tcp_timeout.read
       socket.write_timeout = tcp_timeout.write
     in .tcp_binding?
-      socket = TCPSocket.new host: destination_address.host, port: destination_address.port, dns_resolver: dns_resolver, connect_timeout: tcp_timeout.connect, delegator: nil
+      socket = TCPSocket.new host: destination_address.host, port: destination_address.port, dns_resolver: dns_resolver, connect_timeout: tcp_timeout.connect, caller: nil
       socket.read_timeout = tcp_timeout.read
       socket.write_timeout = tcp_timeout.write
     in .associate_udp?
