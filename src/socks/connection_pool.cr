@@ -2,12 +2,12 @@ class SOCKS::ConnectionPool
   getter clearInterval : Time::Span
   getter capacity : Int32
   getter entries : Set(Entry)
-  getter latestCleanedUp : Time
+  getter lastCleanedUp : Time
   getter mutex : Mutex
 
   def initialize(@clearInterval : Time::Span = 10_i32.seconds, @capacity : Int32 = 5_i32)
     @entries = Set(Entry).new
-    @latestCleanedUp = Time.local
+    @lastCleanedUp = Time.local
     @mutex = Mutex.new :unchecked
   end
 
@@ -21,7 +21,7 @@ class SOCKS::ConnectionPool
   end
 
   private def need_cleared?
-    interval = Time.local - latestCleanedUp.dup
+    interval = Time.local - lastCleanedUp.dup
     interval > clearInterval
   end
 
@@ -46,11 +46,11 @@ class SOCKS::ConnectionPool
       entry.transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
     end
 
-    refresh_latest_cleaned_up
+    refresh_last_cleaned_up
   end
 
-  private def refresh_latest_cleaned_up
-    @latestCleanedUp = Time.local
+  private def refresh_last_cleaned_up
+    @lastCleanedUp = Time.local
   end
 
   def size : Int32

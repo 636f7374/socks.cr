@@ -9,7 +9,7 @@ class Transfer
   property callback : Proc(Transfer, UInt64, UInt64, Nil)?
   property heartbeatCallback : Proc(Transfer, Nil)?
   getter firstAliveTime : Time?
-  getter latestAliveTime : Time?
+  getter lastAliveTime : Time?
   getter sentStatus : Atomic(Int8)
   getter receivedStatus : Atomic(Int8)
   getter sentBytes : Atomic(UInt64)
@@ -24,7 +24,7 @@ class Transfer
 
   def initialize(@source : IO, @destination : IO, @callback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Nil)? = nil)
     @firstAliveTime = nil
-    @latestAliveTime = nil
+    @lastAliveTime = nil
     @sentStatus = Atomic(Int8).new -1_i8
     @receivedStatus = Atomic(Int8).new -1_i8
     @sentBytes = Atomic(UInt64).new 0_u64
@@ -46,12 +46,12 @@ class Transfer
     @concurrentMutex.synchronize { @firstAliveTime }
   end
 
-  private def latest_alive_time=(value : Time)
-    @concurrentMutex.synchronize { @latestAliveTime = value }
+  private def last_alive_time=(value : Time)
+    @concurrentMutex.synchronize { @lastAliveTime = value }
   end
 
-  def latest_alive_time
-    @concurrentMutex.synchronize { @latestAliveTime ||= Time.local }
+  def last_alive_time
+    @concurrentMutex.synchronize { @lastAliveTime ||= Time.local }
   end
 
   def heartbeat_counter
@@ -211,7 +211,7 @@ class Transfer
 
     @concurrentMutex.synchronize do
       @firstAliveTime = nil
-      @latestAliveTime = nil
+      @lastAliveTime = nil
       @sentStatus.set -1_i8
       @receivedStatus.set -1_i8
       @sentBytes.set 0_u64
@@ -227,7 +227,7 @@ class Transfer
 
   def perform
     self.first_alive_time = Time.local
-    self.latest_alive_time = Time.local
+    self.last_alive_time = Time.local
 
     sent_fiber = spawn do
       exception = nil
@@ -236,7 +236,7 @@ class Transfer
       loop do
         copy_size = begin
           IO.yield_copy src: source, dst: destination do |count, length|
-            self.latest_alive_time = Time.local
+            self.last_alive_time = Time.local
             @sentBytes.add(length.to_u64) rescue 0_u64
           end
         rescue ex : IO::CopyException
@@ -245,7 +245,7 @@ class Transfer
         end
 
         copy_size.try { |_copy_size| count += _copy_size }
-        break if aliveInterval <= (Time.local - latest_alive_time)
+        break if aliveInterval <= (Time.local - last_alive_time)
         break if receivedStatus.get.zero?
         next sleep 0.05_f32.seconds if exception.is_a? IO::TimeoutError
 
@@ -263,7 +263,7 @@ class Transfer
       loop do
         copy_size = begin
           IO.yield_copy src: destination, dst: source do |count, length|
-            self.latest_alive_time = Time.local
+            self.last_alive_time = Time.local
             @receivedBytes.add(length.to_u64) rescue 0_u64
           end
         rescue ex : IO::CopyException
@@ -272,7 +272,7 @@ class Transfer
         end
 
         copy_size.try { |_copy_size| count += _copy_size }
-        break if aliveInterval <= (Time.local - latest_alive_time)
+        break if aliveInterval <= (Time.local - last_alive_time)
         break if sentStatus.get.zero?
         next sleep 0.05_f32.seconds if exception.is_a? IO::TimeoutError
 
