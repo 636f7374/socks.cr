@@ -4,11 +4,11 @@ module SOCKS::Layer
       getter server : TCPServer
       getter timeout : TimeOut
       getter socket : TCPSocket?
-      getter closed : Bool?
+      getter closed : Bool
 
       def initialize(@server : TCPServer, @timeout : TimeOut = TimeOut.new)
         @socket = nil
-        @closed = nil
+        @closed = false
       end
 
       def read_timeout=(value : Int | Time::Span | Nil)
