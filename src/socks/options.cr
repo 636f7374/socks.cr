@@ -49,15 +49,15 @@ struct SOCKS::Options
   end
 
   struct Server
-    property destinationProtection : DestinationProtection?
+    property destinationBlocker : DestinationBlocker?
     property wrapper : Wrapper?
 
     def initialize
-      @destinationProtection = DestinationProtection.new
+      @destinationBlocker = DestinationBlocker.new
       @wrapper = nil
     end
 
-    struct DestinationProtection
+    struct DestinationBlocker
       property addresses : Set(Address)
       property ipAddresses : Set(Socket::IPAddress)
 

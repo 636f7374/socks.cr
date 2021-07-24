@@ -1,10 +1,10 @@
 class SOCKS::SessionProcessor
   property session : Session
   getter callback : Proc(Transfer, UInt64, UInt64, Nil)?
-  getter heartbeatCallback : Proc(Transfer, Nil)?
+  getter heartbeatCallback : Proc(Transfer, Time::Span, Nil)?
   getter keepAlive : Bool?
 
-  def initialize(@session : Session, @callback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Nil)? = nil)
+  def initialize(@session : Session, @callback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Time::Span, Nil)? = nil)
     @keepAlive = nil
   end
 
@@ -274,9 +274,10 @@ class SOCKS::SessionProcessor
     end
   end
 
-  private def heartbeat_proc : Proc(Transfer, Nil)?
-    ->(transfer : Transfer) do
-      heartbeatCallback.try &.call transfer
+  private def heartbeat_proc : Proc(Transfer, Time::Span, Nil)?
+    ->(transfer : Transfer, heartbeat_interval : Time::Span) do
+      return sleep heartbeat_interval unless _heartbeat_callback = heartbeatCallback
+      _heartbeat_callback.call transfer, heartbeat_interval
 
       _session_inbound = session.inbound
       _session_inbound.ping rescue nil if _session_inbound.is_a? Enhanced::WebSocket
