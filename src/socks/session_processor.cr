@@ -2,10 +2,10 @@ class SOCKS::SessionProcessor
   property session : Session
   getter callback : Proc(Transfer, UInt64, UInt64, Nil)?
   getter heartbeatCallback : Proc(Transfer, Time::Span, Nil)?
-  getter keepAlive : Bool?
+  getter connectionReuse : Bool?
 
   def initialize(@session : Session, @callback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Time::Span, Nil)? = nil)
-    @keepAlive = nil
+    @connectionReuse = nil
   end
 
   def perform(server : Server)
@@ -19,10 +19,10 @@ class SOCKS::SessionProcessor
     transfer.reset!
 
     loop do
-      break unless session.options.switcher.allowWebSocketKeepAlive
-      break unless check_support_keep_alive?
+      break unless session.options.switcher.allowConnectionReuse
+      break unless check_support_connection_reuse?
       break if session.closed?
-      break unless keepAlive
+      break unless connectionReuse
 
       begin
         server.establish! session
@@ -47,18 +47,18 @@ class SOCKS::SessionProcessor
   end
 
   private def perform(transfer : Transfer)
-    @keepAlive = nil
+    @connectionReuse = nil
     transfer.perform
 
     loop do
-      break if check_inbound_keep_alive transfer: transfer
-      break if check_holding_keep_alive transfer: transfer
+      break if check_inbound_connection_reuse transfer: transfer
+      break if check_holding_connection_reuse transfer: transfer
 
       if transfer.done?
         transfer.cleanup
         session.reset reset_tls: true
 
-        @keepAlive = false
+        @connectionReuse = false
         break
       end
 
@@ -74,18 +74,18 @@ class SOCKS::SessionProcessor
   end
 
   def perform(transfer : Transfer, connection_pool : ConnectionPool)
-    @keepAlive = nil
+    @connectionReuse = nil
     set_transfer_options transfer: transfer
     transfer.perform
 
     loop do
-      break if check_outbound_keep_alive transfer: transfer, connection_pool: connection_pool
+      break if check_outbound_connection_reuse transfer: transfer, connection_pool: connection_pool
 
       if transfer.done?
         transfer.cleanup
         session.reset reset_tls: true
 
-        @keepAlive = false
+        @connectionReuse = false
         break
       end
 
@@ -108,65 +108,27 @@ class SOCKS::SessionProcessor
     transfer.aliveInterval = session.options.session.udpAliveInterval
   end
 
-  private def check_support_keep_alive? : Bool
+  private def check_support_connection_reuse? : Bool
     session.inbound.is_a?(Enhanced::WebSocket) || session.holding.is_a?(Enhanced::WebSocket)
   end
 
-  private def check_inbound_keep_alive(transfer : Transfer) : Bool
+  private def check_inbound_connection_reuse(transfer : Transfer) : Bool
     _session_inbound = session.inbound
     return false unless _session_inbound.is_a? Enhanced::WebSocket
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.done?
-      transfer.destination.close rescue nil
+      transfer.destination.close rescue nil unless transfer.destination.closed?
 
-      loop do
-        next sleep 0.25_f32.seconds unless transfer.finished?
+      case transfer
+      when .sent_done?
+        transfer.destination.close rescue nil unless transfer.destination.closed?
+      when .receive_done?
+        break transfer.destination.close rescue nil unless transfer.destination.closed? unless _session_inbound.confirmed_connection_reuse?.nil?
 
-        unless _session_inbound.keep_alive?
-          transfer.cleanup
-          session.reset reset_tls: true
-
-          @keepAlive = false
-          _session_inbound.keep_alive = nil
-
-          return true
-        end
-
-        begin
-          _session_inbound.ping Enhanced::WebSocket::PingFlag::KeepAlive
-          received = _session_inbound.receive_pong_event!
-          raise Exception.new String.build { |io| io << "SessionProcessor.check_inbound_keep_alive: Received from IO to failure status (" << received << ")." } unless received.confirmed?
-        rescue ex
-          transfer.cleanup
-          session.reset reset_tls: true
-
-          @keepAlive = false
-          _session_inbound.keep_alive = nil
-
-          return true
-        end
-
-        transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
-        session.reset_peer side: Transfer::Side::Destination, reset_tls: true
-
-        @keepAlive = true
-        _session_inbound.keep_alive = nil
-
-        return true
+        _session_inbound.notify_receive_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
+        transfer.destination.close rescue nil unless transfer.destination.closed?
       end
-    end
-  end
-
-  private def check_holding_keep_alive(transfer : Transfer) : Bool
-    _session_holding = session.holding
-    return false unless _session_holding.is_a? Enhanced::WebSocket
-
-    loop do
-      next sleep 0.25_f32.seconds unless transfer.done?
-
-      transfer.destination.close rescue nil
-      _session_holding.process_enhanced_ping! rescue nil
 
       break
     end
@@ -174,26 +136,61 @@ class SOCKS::SessionProcessor
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
 
-      unless _session_holding.keep_alive?
+      unless _session_inbound.confirmed_connection_reuse?
         transfer.cleanup
         session.reset reset_tls: true
 
-        @keepAlive = false
-        _session_holding.keep_alive = nil
+        @connectionReuse = false
+        _session_inbound.confirmed_connection_reuse = nil
 
         return true
       end
 
-      begin
-        _session_holding.ping Enhanced::WebSocket::PingFlag::KeepAlive
-        received = _session_holding.receive_pong_event!
-        raise Exception.new String.build { |io| io << "SessionProcessor.check_holding_keep_alive: Received from IO to failure status (" << received << ")." } unless received.confirmed?
-      rescue ex
+      transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
+      session.reset_peer side: Transfer::Side::Destination, reset_tls: true
+
+      @connectionReuse = true
+      _session_inbound.confirmed_connection_reuse = nil
+
+      return true
+    end
+  end
+
+  private def check_holding_connection_reuse(transfer : Transfer) : Bool
+    _session_holding = session.holding
+    return false unless _session_holding.is_a? Enhanced::WebSocket
+
+    loop do
+      unless transfer.done?
+        _session_holding.ping nil rescue nil
+        sleep 0.25_f32.seconds
+
+        next
+      end
+
+      case transfer
+      when .sent_done?
+        _session_holding.receive_peer_command_notify_decision! expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE rescue nil
+        transfer.destination.close rescue nil unless transfer.destination.closed?
+      when .receive_done?
+        break transfer.destination.close rescue nil unless transfer.destination.closed? unless _session_holding.confirmed_connection_reuse?.nil?
+
+        _session_holding.notify_receive_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
+        transfer.destination.close rescue nil unless transfer.destination.closed?
+      end
+
+      break
+    end
+
+    loop do
+      next sleep 0.25_f32.seconds unless transfer.finished?
+
+      unless _session_holding.confirmed_connection_reuse?
         transfer.cleanup
         session.reset reset_tls: true
 
-        @keepAlive = false
-        _session_holding.keep_alive = nil
+        @connectionReuse = false
+        _session_holding.confirmed_connection_reuse = nil
 
         return true
       end
@@ -205,14 +202,14 @@ class SOCKS::SessionProcessor
       session.inbound = _session_holding
       session.holding = nil
 
-      @keepAlive = true
-      _session_holding.keep_alive = nil
+      @connectionReuse = true
+      _session_holding.confirmed_connection_reuse = nil
 
       return true
     end
   end
 
-  private def check_outbound_keep_alive(transfer : Transfer, connection_pool : ConnectionPool) : Bool
+  private def check_outbound_connection_reuse(transfer : Transfer, connection_pool : ConnectionPool) : Bool
     transfer_destination = transfer.destination
     return false unless transfer_destination.is_a? Client
     enhanced_websocket = transfer_destination.outbound
@@ -221,10 +218,12 @@ class SOCKS::SessionProcessor
     loop do
       next sleep 0.25_f32.seconds unless transfer.sent_done?
 
-      if transfer_destination.options.switcher.allowWebSocketKeepAlive
-        enhanced_websocket.ping SOCKS::Enhanced::WebSocket::PingFlag::KeepAlive rescue nil
-      else
-        enhanced_websocket.ping rescue nil
+      case transfer
+      when .sent_done?
+        enhanced_websocket.notify_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
+        transfer.source.close rescue nil unless transfer.source.closed?
+      when .receive_done?
+        transfer.source.close rescue nil unless transfer.source.closed?
       end
 
       break
@@ -233,26 +232,12 @@ class SOCKS::SessionProcessor
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
 
-      unless enhanced_websocket.keep_alive?
+      unless enhanced_websocket.confirmed_connection_reuse?
         transfer.cleanup
         session.reset reset_tls: true
 
-        @keepAlive = false
-        enhanced_websocket.keep_alive = nil
-
-        return true
-      end
-
-      begin
-        received = enhanced_websocket.receive_ping_event!
-        raise Exception.new String.build { |io| io << "SessionProcessor.check_outbound_keep_alive: Received from IO to failure status (" << received << ")." } unless received.keep_alive?
-        enhanced_websocket.pong event: SOCKS::Enhanced::WebSocket::PongFlag::Confirmed
-      rescue ex
-        transfer.cleanup
-        session.reset reset_tls: true
-
-        @keepAlive = false
-        enhanced_websocket.keep_alive = nil
+        @connectionReuse = false
+        enhanced_websocket.confirmed_connection_reuse = nil
 
         return true
       end
@@ -266,8 +251,8 @@ class SOCKS::SessionProcessor
       transfer_destination.holding.try &.close rescue nil
       transfer_destination.holding = nil
 
-      @keepAlive = true
-      enhanced_websocket.keep_alive = nil
+      @connectionReuse = true
+      enhanced_websocket.confirmed_connection_reuse = nil
       connection_pool.unshift value: transfer
 
       return true
@@ -280,16 +265,16 @@ class SOCKS::SessionProcessor
       _heartbeat_callback.call transfer, heartbeat_interval
 
       _session_inbound = session.inbound
-      _session_inbound.ping rescue nil if _session_inbound.is_a? Enhanced::WebSocket
+      _session_inbound.ping nil rescue nil if _session_inbound.is_a? Enhanced::WebSocket
 
       _session_holding = session.holding
-      _session_holding.ping rescue nil if _session_holding.is_a? Enhanced::WebSocket
+      _session_holding.ping nil rescue nil if _session_holding.is_a? Enhanced::WebSocket
 
       _session_outbound = session.outbound
       return unless _session_outbound.is_a? Client
       enhanced_websocket = _session_outbound.outbound
       return unless enhanced_websocket.is_a? Enhanced::WebSocket
-      enhanced_websocket.ping rescue nil
+      enhanced_websocket.ping nil rescue nil
     end
   end
 end

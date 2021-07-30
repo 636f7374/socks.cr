@@ -207,9 +207,24 @@ class SOCKS::Session < IO
   end
 
   private def upgrade_websocket!(request : HTTP::Request | HTTP::Status | Nil, server : Server) : HTTP::Request
-    response, key, request = HTTP::WebSocket.check_request_validity! socket: inbound, request: request
-
+    response, key, request = HTTP::WebSocket.response_check_request_validity! socket: inbound, request: request
     check_authorization! server: server, request: request, response: response
+
+    request.headers["Sec-WebSocket-Extensions"]?.try do |text_sec_websocket_extensions|
+      sec_websocket_extensions = text_sec_websocket_extensions.split ", "
+
+      sec_websocket_extensions.each do |sec_websocket_extension|
+        extension_flag = SOCKS::Enhanced::ExtensionFlag.parse sec_websocket_extension rescue nil
+        next unless extension_flag
+
+        case extension_flag
+        in .assign_identifier?
+        in .connection_reuse?
+          response.headers.add key: "Connection-Reuse", value: options.switcher.allowConnectionReuse ? "SUPPORTED" : "UNSPPORTED"
+        end
+      end
+    end
+
     HTTP::WebSocket.accept! socket: inbound, response: response, key: key, request: request
 
     protocol = HTTP::WebSocket::Protocol.new io: inbound, masked: false, sync_close: true

@@ -1,11 +1,11 @@
 class HTTP::WebSocket
   def self.accept!(socket : IO) : HTTP::Request
     from_io_request = HTTP::Request.from_io io: socket
-    response, key, request = check_request_validity! socket: socket, request: from_io_request
+    response, key, request = response_check_request_validity! socket: socket, request: from_io_request
     accept! socket: socket, response: response, key: key, request: request
   end
 
-  def self.check_request_validity!(socket : IO, request : HTTP::Request | HTTP::Status | Nil) : Tuple(HTTP::Server::Response, String, HTTP::Request)
+  def self.response_check_request_validity!(socket : IO, request : HTTP::Request | HTTP::Status | Nil) : Tuple(HTTP::Server::Response, String, HTTP::Request)
     raise Exception.new String.build { |io| io << "HTTP::WebSocket.accept: The request type (" << request.class << ") is not HTTP::Request." } unless request.is_a? HTTP::Request
     response = HTTP::Server::Response.new io: socket
 
@@ -48,7 +48,7 @@ class HTTP::WebSocket
     request
   end
 
-  def self.handshake(socket : IO, host : String, port : Int32, resource : String = "/", headers : HTTP::Headers = HTTP::Headers.new, data_raw : String? = nil) : Protocol
+  def self.handshake(socket : IO, host : String, port : Int32, resource : String = "/", headers : HTTP::Headers = HTTP::Headers.new, data_raw : String? = nil) : Tuple(HTTP::Client::Response, Protocol)
     random_key = Base64.strict_encode StaticArray(UInt8, 16_i32).new { rand(256_i32).to_u8 }
 
     headers["Host"] = headers["Host"]? || String.build { |io| io << host << ':' << port }
@@ -68,7 +68,7 @@ class HTTP::WebSocket
     challenge_response = Protocol.key_challenge random_key
     raise Socket::Error.new "HTTP::WebSocket.handshake: Handshake got denied. Server did not verify WebSocket challenge." unless handshake_response.headers["Sec-WebSocket-Accept"]? == challenge_response
 
-    Protocol.new socket, masked: true
+    Tuple.new handshake_response, Protocol.new socket, masked: true
   end
 
   def self.websocket_upgrade?(request : HTTP::Request) : Bool

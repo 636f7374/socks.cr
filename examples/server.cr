@@ -11,7 +11,7 @@ dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 # `SOCKS::Options`, adjust the server policy, such as whether to allow WebSocketKeepAlive.
 
 options = SOCKS::Options.new
-options.switcher.allowWebSocketKeepAlive = true
+options.switcher.allowConnectionReuse = true
 options.server.wrapper = SOCKS::Options::Server::Wrapper::WebSocket.new
 
 # Finally, you call `SOCKS::SessionProcessor.perform` to automatically process.

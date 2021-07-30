@@ -12,7 +12,8 @@ dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 
 options = SOCKS::Options.new
 options.client.wrapper = SOCKS::Options::Client::Wrapper::WebSocket.new address: SOCKS::Address.new(host: "0.0.0.0", port: 1234_i32), resource: "/", headers: HTTP::Headers.new, dataRaw: nil
-options.switcher.allowWebSocketKeepAlive = true
+options.switcher.allowConnectionReuse = true
+options.switcher.enableConnectionIdentifier = true
 options.switcher.allowTCPBinding = true
 options.switcher.allowAssociateUDP = true
 
@@ -63,7 +64,7 @@ begin
   STDOUT.puts [:tcpConnection, Time.local, http_response]
 
   # Use WebSocket Enhanced KeepAlive to tell the peer to terminate the destination connection.
-  STDOUT.puts [:keepAlive, Time.local, client.notify_keep_alive!]
+  STDOUT.puts [:connectionReuse, Time.local, client.notify_peer_termination!]
 
   # Establish a TCPBinding to example.com through outbound.
   client.establish! command_type: SOCKS::Frames::CommandFlag::TCPBinding, host: "example.com", port: 80_i32, remote_dns_resolution: true
@@ -78,7 +79,7 @@ begin
   STDOUT.puts [:tcpBinding, Time.local, http_response]
 
   # Use WebSocket Enhanced KeepAlive to tell the peer to terminate the destination connection.
-  STDOUT.puts [:keepAlive, Time.local, client.notify_keep_alive!]
+  STDOUT.puts [:connectionReuse, Time.local, client.notify_peer_termination!]
 
   # Establish a AssociateUDP to example.com through outbound.
   client.establish! command_type: SOCKS::Frames::CommandFlag::AssociateUDP, host: "8.8.8.8", port: 53_i32, remote_dns_resolution: true

@@ -178,44 +178,51 @@ class SOCKS::Client < IO
     in Nil
     end
 
-    protocol = HTTP::WebSocket.handshake socket: outbound, host: host, port: port, resource: resource, headers: headers, data_raw: data_raw
-    @outbound = Enhanced::WebSocket.new io: protocol, options: options
+    extensions = Set(Enhanced::ExtensionFlag).new
+    extensions << Enhanced::ExtensionFlag::CONNECTION_REUSE if options.switcher.allowConnectionReuse
+    extensions << Enhanced::ExtensionFlag::ASSIGN_IDENTIFIER if options.switcher.enableConnectionIdentifier
+    headers["Sec-WebSocket-Extensions"] = String.build { |io| io << extensions.map(&.to_s).join ", " } unless extensions.empty?
+
+    response, protocol = HTTP::WebSocket.handshake socket: outbound, host: host, port: port, resource: resource, headers: headers, data_raw: data_raw
+    outbound = Enhanced::WebSocket.new io: protocol, options: options
+
+    response_headers_connection_reuse = response.headers["Connection-Reuse"]?
+    outbound.confirmed_connection_reuse = false if options.switcher.allowConnectionReuse && response_headers_connection_reuse.nil?
+
+    response_headers_connection_reuse.try do |text_connection_reuse|
+      case text_connection_reuse
+      when "UNSUPPORTED"
+        outbound.confirmed_connection_reuse = false
+      end
+    end
+
+    @outbound = outbound
   end
 
-  def notify_keep_alive! : Enhanced::WebSocket::PongFlag
+  def notify_peer_termination! : SOCKS::Enhanced::DecisionFlag
     _outbound = outbound
 
     if _outbound.is_a? Enhanced::WebSocket
-      _outbound.ping event: Enhanced::WebSocket::PingFlag::KeepAlive
-      pong_received = _outbound.receive_pong_event!
-      raise Exception.new String.build { |io| io << "permissionType received from IO (" << pong_received << ")." } if pong_received.refused?
+      decision_flag = _outbound.notify_receive_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE
+      raise Exception.new String.build { |io| io << "DecisionType received from IO (" << decision_flag << ")." } if decision_flag.refused?
 
-      ping_received = _outbound.receive_ping_event!
-      raise Exception.new String.build { |io| io << "Unknown Ping eventType received from IO (" << ping_received << ")." } unless ping_received.keep_alive?
-      _outbound.pong event: Enhanced::WebSocket::PongFlag::Confirmed
-
-      return pong_received
+      return decision_flag
     end
 
     _holding = holding
 
     if _holding.is_a? Enhanced::WebSocket
       outbound.close rescue nil
-      _holding.ping event: Enhanced::WebSocket::PingFlag::KeepAlive
-      pong_received = _holding.receive_pong_event!
-      raise Exception.new String.build { |io| io << "permissionType received from IO (" << pong_received << ")." } if pong_received.refused?
-
-      ping_received = _holding.receive_ping_event!
-      raise Exception.new String.build { |io| io << "Unknown Ping eventType received from IO (" << ping_received << ")." } unless ping_received.keep_alive?
-      _holding.pong event: Enhanced::WebSocket::PongFlag::Confirmed
+      decision_flag = _holding.notify_receive_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE
+      raise Exception.new String.build { |io| io << "DecisionType received from IO (" << decision_flag << ")." } if decision_flag.refused?
 
       @outbound = _holding
       @holding = nil
 
-      return pong_received
+      return decision_flag
     end
 
-    Enhanced::WebSocket::PongFlag::Refused
+    SOCKS::Enhanced::DecisionFlag::REFUSED
   end
 
   def handshake! : Bool

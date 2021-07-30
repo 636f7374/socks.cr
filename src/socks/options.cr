@@ -17,12 +17,14 @@ struct SOCKS::Options
   end
 
   struct Switcher
-    property allowWebSocketKeepAlive : Bool
+    property allowConnectionReuse : Bool
+    property enableConnectionIdentifier : Bool
     property allowTCPBinding : Bool
     property allowAssociateUDP : Bool
 
     def initialize
-      @allowWebSocketKeepAlive = false
+      @allowConnectionReuse = true
+      @enableConnectionIdentifier = true
       @allowTCPBinding = true
       @allowAssociateUDP = true
     end
