@@ -59,6 +59,14 @@ module SOCKS::Enhanced
       @mutex.synchronize { @confirmedConnectionReuse }
     end
 
+    def ignore_notify=(value : Bool)
+      @ignoreNotify = value
+    end
+
+    def ignore_notify?
+      @ignoreNotify
+    end
+
     def check_alive?(receive_times : Int32 = 2_i32) : Bool?
       check_alive! receive_times: receive_times rescue nil
     end
@@ -130,7 +138,10 @@ module SOCKS::Enhanced
 
             if decision_flag.confirmed?
               self.confirmed_connection_reuse = true
-              raise Exception.new "Enhanced::WebSocket.update_buffer: Received Ping CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
+
+              unless ignore_notify?
+                raise Exception.new "Enhanced::WebSocket.update_buffer: Received Ping CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
+              end
             end
           end
         when .pong?
@@ -148,7 +159,10 @@ module SOCKS::Enhanced
             case _decision_flag
             in .confirmed?
               self.confirmed_connection_reuse = true
-              raise Exception.new "Enhanced::WebSocket.update_buffer: Received Pong CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
+
+              unless ignore_notify?
+                raise Exception.new "Enhanced::WebSocket.update_buffer: Received Pong CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
+              end
             in .refused?
               self.confirmed_connection_reuse = false
             end

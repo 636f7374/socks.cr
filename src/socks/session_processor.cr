@@ -40,6 +40,9 @@ class SOCKS::SessionProcessor
         break
       end
 
+      transfer_source = transfer.source
+      transfer_source.ignore_notify = false if transfer_source.is_a? Enhanced::WebSocket
+
       transfer.destination = outbound
       perform transfer: transfer
       transfer.reset!
@@ -67,6 +70,8 @@ class SOCKS::SessionProcessor
   end
 
   def perform(outbound : IO, connection_pool : ConnectionPool)
+    outbound.ignore_notify = false if outbound.is_a? Enhanced::WebSocket
+
     transfer = Transfer.new source: session, destination: outbound, callback: callback, heartbeatCallback: heartbeat_proc
     session.set_transfer_tls transfer: transfer, reset: true
 
@@ -156,6 +161,7 @@ class SOCKS::SessionProcessor
 
       @connectionReuse = true
       _session_inbound.confirmed_connection_reuse = nil
+      _session_inbound.ignore_notify = true
 
       return true
     end
@@ -214,6 +220,7 @@ class SOCKS::SessionProcessor
 
       @connectionReuse = true
       _session_holding.confirmed_connection_reuse = nil
+      _session_holding.ignore_notify = true
 
       return true
     end
@@ -268,6 +275,7 @@ class SOCKS::SessionProcessor
 
       @connectionReuse = true
       enhanced_websocket.confirmed_connection_reuse = nil
+      enhanced_websocket.ignore_notify = true
       connection_pool.unshift value: transfer
 
       return true
