@@ -1,10 +1,10 @@
 class SOCKS::SessionProcessor
   property session : Session
   getter callback : Proc(Transfer, UInt64, UInt64, Nil)?
-  getter heartbeatCallback : Proc(Transfer, Time::Span, Nil)?
+  getter heartbeatCallback : Proc(Transfer, Time::Span, Bool)?
   getter connectionReuse : Bool?
 
-  def initialize(@session : Session, @callback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Time::Span, Nil)? = nil)
+  def initialize(@session : Session, @callback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Time::Span, Bool)? = nil)
     @connectionReuse = nil
   end
 
@@ -259,22 +259,40 @@ class SOCKS::SessionProcessor
     end
   end
 
-  private def heartbeat_proc : Proc(Transfer, Time::Span, Nil)?
+  private def heartbeat_proc : Proc(Transfer, Time::Span, Bool)?
     ->(transfer : Transfer, heartbeat_interval : Time::Span) do
-      return sleep heartbeat_interval unless _heartbeat_callback = heartbeatCallback
-      _heartbeat_callback.call transfer, heartbeat_interval
+      _heartbeat_callback = heartbeatCallback
+      heartbeat = _heartbeat_callback ? _heartbeat_callback.call(transfer, heartbeat_interval) : true
 
-      _session_inbound = session.inbound
-      _session_inbound.ping nil rescue nil if _session_inbound.is_a? Enhanced::WebSocket
+      if heartbeat
+        begin
+          _session_inbound = session.inbound
+          _session_inbound.ping nil if _session_inbound.is_a? Enhanced::WebSocket
 
-      _session_holding = session.holding
-      _session_holding.ping nil rescue nil if _session_holding.is_a? Enhanced::WebSocket
+          _session_holding = session.holding
+          _session_holding.ping nil if _session_holding.is_a? Enhanced::WebSocket
 
-      _session_outbound = session.outbound
-      return unless _session_outbound.is_a? Client
-      enhanced_websocket = _session_outbound.outbound
-      return unless enhanced_websocket.is_a? Enhanced::WebSocket
-      enhanced_websocket.ping nil rescue nil
+          _session_outbound = session.outbound
+          raise Exception.new unless _session_outbound.is_a? Client
+          enhanced_websocket = _session_outbound.outbound
+          raise Exception.new unless enhanced_websocket.is_a? Enhanced::WebSocket
+          enhanced_websocket.ping nil
+        rescue ex
+          unless _heartbeat_callback
+            sleep heartbeat_interval
+
+            return false
+          end
+        end
+      end
+
+      unless _heartbeat_callback
+        sleep heartbeat_interval
+
+        return true
+      end
+
+      return !!heartbeat
     end
   end
 end

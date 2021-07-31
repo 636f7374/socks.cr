@@ -7,7 +7,7 @@ class Transfer
   property source : IO
   property destination : IO
   property callback : Proc(Transfer, UInt64, UInt64, Nil)?
-  property heartbeatCallback : Proc(Transfer, Time::Span, Nil)?
+  property heartbeatCallback : Proc(Transfer, Time::Span, Bool)?
   getter firstAliveTime : Time?
   getter lastAliveTime : Time?
   getter sentStatus : Atomic(Int8)
@@ -22,7 +22,7 @@ class Transfer
   getter concurrentFibers : Set(Fiber)
   getter concurrentMutex : Mutex
 
-  def initialize(@source : IO, @destination : IO, @callback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Time::Span, Nil)? = nil)
+  def initialize(@source : IO, @destination : IO, @callback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Time::Span, Bool)? = nil)
     @firstAliveTime = nil
     @lastAliveTime = nil
     @sentStatus = Atomic(Int8).new -1_i8
@@ -296,8 +296,8 @@ class Transfer
         next sleep 0.25_f32.seconds unless heartbeat_callback = heartbeatCallback
         next sleep 0.25_f32.seconds if sent_done? || receive_done?
 
-        heartbeat_callback.call self, heartbeatInterval rescue nil
-        @concurrentMutex.synchronize { @heartbeatCounter.add(1_i64) rescue nil }
+        successful = heartbeat_callback.call self, heartbeatInterval rescue nil
+        @concurrentMutex.synchronize { @heartbeatCounter.add(1_i64) rescue nil } if successful
       end
     end
 
