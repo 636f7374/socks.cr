@@ -59,50 +59,29 @@ module SOCKS::Enhanced
       @mutex.synchronize { @confirmedConnectionReuse }
     end
 
-    def ignore_notify=(value : Bool)
-      @ignoreNotify = value
+    def pending_ping_command=(value : IO::Memory)
+      @mutex.synchronize { @pendingPingCommand = value }
     end
 
-    def ignore_notify?
-      @ignoreNotify
+    def pending_ping_command
+      @mutex.synchronize { @pendingPingCommand.dup }
     end
 
-    def check_alive?(receive_times : Int32 = 2_i32) : Bool?
-      check_alive! receive_times: receive_times rescue nil
-    end
+    def process_pending_ping!
+      return unless _pending_ping_command = pending_ping_command
+      slice = _pending_ping_command.to_slice
 
-    private def check_alive!(receive_times : Int32 = 2_i32) : Bool
-      receive_buffer = uninitialized UInt8[4096_i32]
+      command_flag = CommandFlag.from_value slice[0_i32] rescue nil
+      return pong nil unless _command_flag = command_flag
 
-      receive_times.times do
-        receive = io.receive receive_buffer.to_slice
+      case _command_flag
+      when CommandFlag::CONNECTION_REUSE
+        closed_flag = ClosedFlag.from_value slice[1_i32] rescue nil
+        return pong nil unless _closed_flag = closed_flag
 
-        case receive.opcode
-        when .ping?
-          pong nil
-        when .pong?
-          slice = receive_buffer.to_slice[0_i32, receive.size]
-          return true if slice.size < 2_i32
-
-          command_flag = CommandFlag.from_value slice[0_i32] rescue nil
-          return true unless _command_flag = command_flag
-
-          case _command_flag
-          when CommandFlag::CONNECTION_REUSE
-            decision_flag = DecisionFlag.from_value slice[1_i32] rescue nil
-            return true unless _decision_flag = decision_flag
-
-            case _decision_flag
-            in .confirmed?
-              self.confirmed_connection_reuse = true
-            in .refused?
-              self.confirmed_connection_reuse = false
-            end
-          end
-        end
+        decision_flag = response_peer_termination! command_flag: _command_flag, decision_flag: nil
+        self.confirmed_connection_reuse = true if decision_flag.confirmed?
       end
-
-      true
     end
 
     private def update_buffer
@@ -134,15 +113,8 @@ module SOCKS::Enhanced
             closed_flag = ClosedFlag.from_value slice[1_i32] rescue nil
             next pong nil unless _closed_flag = closed_flag
 
-            decision_flag = response_peer_termination! command_flag: _command_flag, decision_flag: nil
-
-            if decision_flag.confirmed?
-              self.confirmed_connection_reuse = true
-
-              unless ignore_notify?
-                raise Exception.new "Enhanced::WebSocket.update_buffer: Received Ping CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
-              end
-            end
+            self.pending_ping_command = IO::Memory.new receive_buffer.to_slice[0_i32, receive.size].dup
+            raise Exception.new "Enhanced::WebSocket.update_buffer: Received Ping CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
           end
         when .pong?
           slice = receive_buffer.to_slice[0_i32, receive.size]
@@ -160,9 +132,7 @@ module SOCKS::Enhanced
             in .confirmed?
               self.confirmed_connection_reuse = true
 
-              unless ignore_notify?
-                raise Exception.new "Enhanced::WebSocket.update_buffer: Received Pong CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
-              end
+              raise Exception.new "Enhanced::WebSocket.update_buffer: Received Pong CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
             in .refused?
               self.confirmed_connection_reuse = false
             end
@@ -182,7 +152,7 @@ module SOCKS::Enhanced
 
     def notify_peer_termination!(command_flag : CommandFlag, closed_flag : ClosedFlag)
       raise Exception.new "Enhanced::WebSocket.notify_peer_termination!: Options.switcher.allowConnectionReuse is false." unless options.try &.switcher.try &.allowConnectionReuse
-      raise Exception.new "Enhanced::WebSocket.notify_peer_termination!: Enhanced::WebSocket.confirmed_connection_reuse is false." if false == confirmed_connection_reuse?
+      raise Exception.new String.build { |io| io << "Enhanced::WebSocket.notify_peer_termination!: Enhanced::WebSocket.confirmed_connection_reuse is " << confirmed_connection_reuse?.to_s << '.' } unless confirmed_connection_reuse?.nil?
 
       ping Bytes[command_flag.value, closed_flag.value]
     end

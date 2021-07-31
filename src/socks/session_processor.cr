@@ -40,9 +40,6 @@ class SOCKS::SessionProcessor
         break
       end
 
-      transfer_source = transfer.source
-      transfer_source.ignore_notify = false if transfer_source.is_a? Enhanced::WebSocket
-
       transfer.destination = outbound
       perform transfer: transfer
       transfer.reset!
@@ -70,8 +67,6 @@ class SOCKS::SessionProcessor
   end
 
   def perform(outbound : IO, connection_pool : ConnectionPool)
-    outbound.ignore_notify = false if outbound.is_a? Enhanced::WebSocket
-
     transfer = Transfer.new source: session, destination: outbound, callback: callback, heartbeatCallback: heartbeat_proc
     session.set_transfer_tls transfer: transfer, reset: true
 
@@ -131,11 +126,7 @@ class SOCKS::SessionProcessor
       when .receive_done?
         break transfer.destination.close rescue nil unless transfer.destination.closed? unless _session_inbound.confirmed_connection_reuse?.nil?
 
-        _session_inbound.ping nil rescue nil
         _session_inbound.notify_receive_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
-        _session_inbound.ping nil rescue nil
-        _session_inbound.ping nil rescue nil
-
         transfer.destination.close rescue nil unless transfer.destination.closed?
       end
 
@@ -144,7 +135,7 @@ class SOCKS::SessionProcessor
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
-      _session_inbound.check_alive?
+      _session_inbound.process_pending_ping! rescue nil
 
       unless _session_inbound.confirmed_connection_reuse?
         transfer.cleanup
@@ -161,7 +152,6 @@ class SOCKS::SessionProcessor
 
       @connectionReuse = true
       _session_inbound.confirmed_connection_reuse = nil
-      _session_inbound.ignore_notify = true
 
       return true
     end
@@ -186,11 +176,7 @@ class SOCKS::SessionProcessor
       when .receive_done?
         break transfer.destination.close rescue nil unless transfer.destination.closed? unless _session_holding.confirmed_connection_reuse?.nil?
 
-        _session_holding.ping nil rescue nil
         _session_holding.notify_receive_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
-        _session_holding.ping nil rescue nil
-        _session_holding.ping nil rescue nil
-
         transfer.destination.close rescue nil unless transfer.destination.closed?
       end
 
@@ -199,7 +185,7 @@ class SOCKS::SessionProcessor
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
-      _session_holding.check_alive?
+      _session_holding.process_pending_ping! rescue nil
 
       unless _session_holding.confirmed_connection_reuse?
         transfer.cleanup
@@ -220,7 +206,6 @@ class SOCKS::SessionProcessor
 
       @connectionReuse = true
       _session_holding.confirmed_connection_reuse = nil
-      _session_holding.ignore_notify = true
 
       return true
     end
@@ -237,11 +222,7 @@ class SOCKS::SessionProcessor
 
       case transfer
       when .sent_done?
-        enhanced_websocket.ping nil rescue nil
         enhanced_websocket.notify_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
-        enhanced_websocket.ping nil rescue nil
-        enhanced_websocket.ping nil rescue nil
-
         transfer.source.close rescue nil unless transfer.source.closed?
       when .receive_done?
         transfer.source.close rescue nil unless transfer.source.closed?
@@ -252,7 +233,7 @@ class SOCKS::SessionProcessor
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
-      enhanced_websocket.check_alive?
+      enhanced_websocket.process_pending_ping! rescue nil
 
       unless enhanced_websocket.confirmed_connection_reuse?
         transfer.cleanup
@@ -275,7 +256,6 @@ class SOCKS::SessionProcessor
 
       @connectionReuse = true
       enhanced_websocket.confirmed_connection_reuse = nil
-      enhanced_websocket.ignore_notify = true
       connection_pool.unshift value: transfer
 
       return true
