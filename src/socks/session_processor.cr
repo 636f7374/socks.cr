@@ -126,7 +126,11 @@ class SOCKS::SessionProcessor
       when .receive_done?
         break transfer.destination.close rescue nil unless transfer.destination.closed? unless _session_inbound.confirmed_connection_reuse?.nil?
 
+        _session_inbound.ping nil rescue nil
         _session_inbound.notify_receive_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
+        _session_inbound.ping nil rescue nil
+        _session_inbound.ping nil rescue nil
+
         transfer.destination.close rescue nil unless transfer.destination.closed?
       end
 
@@ -135,6 +139,7 @@ class SOCKS::SessionProcessor
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
+      _session_inbound.check_alive?
 
       unless _session_inbound.confirmed_connection_reuse?
         transfer.cleanup
@@ -175,7 +180,11 @@ class SOCKS::SessionProcessor
       when .receive_done?
         break transfer.destination.close rescue nil unless transfer.destination.closed? unless _session_holding.confirmed_connection_reuse?.nil?
 
+        _session_holding.ping nil rescue nil
         _session_holding.notify_receive_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
+        _session_holding.ping nil rescue nil
+        _session_holding.ping nil rescue nil
+
         transfer.destination.close rescue nil unless transfer.destination.closed?
       end
 
@@ -184,6 +193,7 @@ class SOCKS::SessionProcessor
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
+      _session_holding.check_alive?
 
       unless _session_holding.confirmed_connection_reuse?
         transfer.cleanup
@@ -220,7 +230,11 @@ class SOCKS::SessionProcessor
 
       case transfer
       when .sent_done?
+        enhanced_websocket.ping nil rescue nil
         enhanced_websocket.notify_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
+        enhanced_websocket.ping nil rescue nil
+        enhanced_websocket.ping nil rescue nil
+
         transfer.source.close rescue nil unless transfer.source.closed?
       when .receive_done?
         transfer.source.close rescue nil unless transfer.source.closed?
@@ -231,6 +245,7 @@ class SOCKS::SessionProcessor
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
+      enhanced_websocket.check_alive?
 
       unless enhanced_websocket.confirmed_connection_reuse?
         transfer.cleanup

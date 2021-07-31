@@ -59,6 +59,44 @@ module SOCKS::Enhanced
       @mutex.synchronize { @confirmedConnectionReuse }
     end
 
+    def check_alive?(receive_times : Int32 = 2_i32) : Bool?
+      check_alive! receive_times: receive_times rescue nil
+    end
+
+    private def check_alive!(receive_times : Int32 = 2_i32) : Bool
+      receive_buffer = uninitialized UInt8[4096_i32]
+
+      receive_times.times do
+        receive = io.receive receive_buffer.to_slice
+
+        case receive.opcode
+        when .ping?
+          pong nil
+        when .pong?
+          slice = receive_buffer.to_slice[0_i32, receive.size]
+          return true if slice.size < 2_i32
+
+          command_flag = CommandFlag.from_value slice[0_i32] rescue nil
+          return true unless _command_flag = command_flag
+
+          case _command_flag
+          when CommandFlag::CONNECTION_REUSE
+            decision_flag = DecisionFlag.from_value slice[1_i32] rescue nil
+            return true unless _decision_flag = decision_flag
+
+            case _decision_flag
+            in .confirmed?
+              self.confirmed_connection_reuse = true
+            in .refused?
+              self.confirmed_connection_reuse = false
+            end
+          end
+        end
+      end
+
+      true
+    end
+
     private def update_buffer
       receive_buffer = uninitialized UInt8[4096_i32]
 
@@ -194,6 +232,7 @@ module SOCKS::Enhanced
 
             if decision_flag.confirmed?
               self.confirmed_connection_reuse = true
+
               raise Exception.new "Enhanced::WebSocket.receive_peer_command_notify_decision!: Received Ping CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
             end
           end
