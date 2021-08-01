@@ -67,8 +67,6 @@ class SOCKS::SessionProcessor
   end
 
   def perform(outbound : IO, connection_pool : ConnectionPool)
-    outbound.ignore_notify = false if outbound.is_a? Enhanced::WebSocket
-
     transfer = Transfer.new source: session, destination: outbound, callback: callback, heartbeatCallback: heartbeat_proc
     session.set_transfer_tls transfer: transfer, reset: true
 
@@ -126,12 +124,7 @@ class SOCKS::SessionProcessor
       when .sent_done?
         transfer.destination.close rescue nil unless transfer.destination.closed?
       when .receive_done?
-        break transfer.destination.close rescue nil unless transfer.destination.closed? unless _session_inbound.confirmed_connection_reuse?.nil?
-
-        unless _session_inbound.pending_ping_command_bytes
-          _session_inbound.notify_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
-        end
-
+        _session_inbound.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
         transfer.destination.close rescue nil unless transfer.destination.closed?
       end
 
@@ -140,7 +133,10 @@ class SOCKS::SessionProcessor
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
-      _session_inbound.process_pending_ping! rescue nil
+
+      _session_inbound.response_pending_ping! rescue nil
+      _session_inbound.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE rescue nil
+      _session_inbound.pending_ping_command_bytes = nil
 
       unless _session_inbound.confirmed_connection_reuse?
         transfer.cleanup
@@ -176,18 +172,10 @@ class SOCKS::SessionProcessor
 
       case transfer
       when .sent_done?
-        unless _session_holding.pending_ping_command_bytes
-          _session_holding.notify_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
-        end
-
+        _session_holding.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
         transfer.destination.close rescue nil unless transfer.destination.closed?
       when .receive_done?
-        break transfer.destination.close rescue nil unless transfer.destination.closed? unless _session_holding.confirmed_connection_reuse?.nil?
-
-        unless _session_holding.pending_ping_command_bytes
-          _session_holding.notify_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
-        end
-
+        _session_holding.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
         transfer.destination.close rescue nil unless transfer.destination.closed?
       end
 
@@ -196,7 +184,10 @@ class SOCKS::SessionProcessor
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
-      _session_holding.process_pending_ping! rescue nil
+
+      _session_holding.response_pending_ping! rescue nil
+      _session_holding.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE rescue nil
+      _session_holding.pending_ping_command_bytes = nil
 
       unless _session_holding.confirmed_connection_reuse?
         transfer.cleanup
@@ -233,11 +224,8 @@ class SOCKS::SessionProcessor
 
       case transfer
       when .sent_done?
-        unless enhanced_websocket.pending_ping_command_bytes
-          enhanced_websocket.notify_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
-        end
-
         transfer.source.close rescue nil unless transfer.source.closed?
+        enhanced_websocket.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
       when .receive_done?
         transfer.source.close rescue nil unless transfer.source.closed?
       end
@@ -247,7 +235,10 @@ class SOCKS::SessionProcessor
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
-      enhanced_websocket.process_pending_ping! rescue nil
+
+      enhanced_websocket.response_pending_ping! rescue nil
+      enhanced_websocket.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE rescue nil
+      enhanced_websocket.pending_ping_command_bytes = nil
 
       unless enhanced_websocket.confirmed_connection_reuse?
         transfer.cleanup
@@ -270,7 +261,6 @@ class SOCKS::SessionProcessor
 
       @connectionReuse = true
       enhanced_websocket.confirmed_connection_reuse = nil
-      enhanced_websocket.ignore_notify = true
       connection_pool.unshift value: transfer
 
       return true

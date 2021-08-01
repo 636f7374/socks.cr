@@ -201,31 +201,28 @@ class SOCKS::Client < IO
 
   def notify_peer_termination! : SOCKS::Enhanced::DecisionFlag
     _outbound = outbound
+    _holding = holding
 
     if _outbound.is_a? Enhanced::WebSocket
-      unless _outbound.pending_ping_command_bytes
-        _outbound.notify_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
-        _outbound.process_pending_ping! rescue nil
-      end
-
-      _outbound.ignore_notify = true
+      _outbound.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
+      _outbound.response_pending_ping! rescue nil
+      _outbound.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE rescue nil
       raise Exception.new String.build { |io| io << "DecisionType received from IO (" << SOCKS::Enhanced::DecisionFlag::REFUSED << ")." } if false == _outbound.confirmed_connection_reuse?
+      _outbound.confirmed_connection_reuse = nil
+      _outbound.pending_ping_command_bytes = nil
 
       return SOCKS::Enhanced::DecisionFlag::CONFIRMED
     end
 
-    _holding = holding
-
     if _holding.is_a? Enhanced::WebSocket
       outbound.close rescue nil
 
-      unless _holding.pending_ping_command_bytes
-        _holding.notify_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
-        _holding.process_pending_ping! rescue nil
-      end
-
-      _holding.ignore_notify = true
+      _holding.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
+      _holding.response_pending_ping! rescue nil
+      _holding.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE rescue nil
       raise Exception.new String.build { |io| io << "DecisionType received from IO (" << SOCKS::Enhanced::DecisionFlag::REFUSED << ")." } if false == _holding.confirmed_connection_reuse?
+      _holding.confirmed_connection_reuse = nil
+      _holding.pending_ping_command_bytes = nil
 
       @outbound = _holding
       @holding = nil
@@ -397,11 +394,6 @@ class SOCKS::Client < IO
       @outbound = associate_udp
       @holding = _outbound
     end
-
-    _outbound = outbound
-    _outbound.ignore_notify = false if _outbound.is_a? Enhanced::WebSocket
-    _holding = holding
-    _holding.ignore_notify = false if _holding.is_a? Enhanced::WebSocket
   end
 end
 

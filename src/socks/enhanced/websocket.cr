@@ -59,37 +59,12 @@ module SOCKS::Enhanced
       @mutex.synchronize { @confirmedConnectionReuse }
     end
 
-    def pending_ping_command_bytes=(value : Bytes)
+    def pending_ping_command_bytes=(value : Bytes?)
       @mutex.synchronize { @pendingPingCommandBytes = value }
     end
 
     def pending_ping_command_bytes
       @mutex.synchronize { @pendingPingCommandBytes.dup }
-    end
-
-    def ignore_notify=(value : Bool)
-      @mutex.synchronize { @ignoreNotify = value }
-    end
-
-    def ignore_notify?
-      @mutex.synchronize { @ignoreNotify }
-    end
-
-    def process_pending_ping!
-      return unless _pending_ping_command_bytes = pending_ping_command_bytes
-      slice = _pending_ping_command_bytes
-
-      command_flag = CommandFlag.from_value slice[0_i32] rescue nil
-      return pong nil unless _command_flag = command_flag
-
-      case _command_flag
-      when CommandFlag::CONNECTION_REUSE
-        closed_flag = ClosedFlag.from_value slice[1_i32] rescue nil
-        return pong nil unless _closed_flag = closed_flag
-
-        decision_flag = response_peer_termination! command_flag: _command_flag, decision_flag: nil
-        self.confirmed_connection_reuse = true if decision_flag.confirmed?
-      end
     end
 
     private def update_buffer
@@ -110,56 +85,89 @@ module SOCKS::Enhanced
 
           break
         when .ping?
-          slice = receive_buffer.to_slice[0_i32, receive.size]
-          next pong nil if slice.size < 2_i32
+          slice = receive_buffer.to_slice[0_i32, receive.size].dup
 
-          command_flag = CommandFlag.from_value slice[0_i32] rescue nil
-          next pong nil unless _command_flag = command_flag
+          parse_ping_command?(slice: slice).try do |tuple|
+            self.pending_ping_command_bytes = slice
 
-          case _command_flag
-          when CommandFlag::CONNECTION_REUSE
-            closed_flag = ClosedFlag.from_value slice[1_i32] rescue nil
-            next pong nil unless _closed_flag = closed_flag
-
-            self.pending_ping_command_bytes = receive_buffer.to_slice[0_i32, receive.size].dup
-
-            unless ignore_notify?
-              raise Exception.new "Enhanced::WebSocket.update_buffer: Received Ping CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
+            case tuple.first
+            in .connection_reuse?
+              raise Exception.new "Enhanced::WebSocket.update_buffer: Received Ping CommandFlag::CONNECTION_REUSE from io."
             end
           end
         when .pong?
-          slice = receive_buffer.to_slice[0_i32, receive.size]
-          next if slice.size < 2_i32
+          slice = receive_buffer.to_slice[0_i32, receive.size].dup
 
-          command_flag = CommandFlag.from_value slice[0_i32] rescue nil
-          next unless _command_flag = command_flag
-
-          case _command_flag
-          when CommandFlag::CONNECTION_REUSE
-            decision_flag = DecisionFlag.from_value slice[1_i32] rescue nil
-            next unless _decision_flag = decision_flag
-
-            case _decision_flag
-            in .confirmed?
-              self.confirmed_connection_reuse = true
-
-              unless ignore_notify?
+          parse_pong_command?(slice: slice).try do |tuple|
+            case tuple.first
+            in .connection_reuse?
+              case tuple.last
+              in .confirmed?
+                self.confirmed_connection_reuse = true
                 raise Exception.new "Enhanced::WebSocket.update_buffer: Received Pong CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
+              in .refused?
+                self.confirmed_connection_reuse = false
+                raise Exception.new "Enhanced::WebSocket.update_buffer: Received Pong CommandFlag::CONNECTION_REUSE (DecisionFlag::REFUSED) from io."
               end
-            in .refused?
-              self.confirmed_connection_reuse = false
             end
           end
         end
       end
     end
 
-    def notify_peer_termination!(command_flag : CommandFlag, closed_flag : ClosedFlag)
+    private def parse_ping_command?(slice : Bytes) : Tuple(CommandFlag, ClosedFlag)?
+      return if slice.size < 2_i32
+
+      command_flag = CommandFlag.from_value slice[0_i32] rescue nil
+      return unless _command_flag = command_flag
+
+      case _command_flag
+      in .connection_reuse?
+        closed_flag = ClosedFlag.from_value slice[1_i32] rescue nil
+        return unless _closed_flag = closed_flag
+
+        return Tuple.new command_flag, _closed_flag
+      end
+    end
+
+    private def parse_pong_command?(slice : Bytes) : Tuple(CommandFlag, DecisionFlag)?
+      return if slice.size < 2_i32
+
+      command_flag = CommandFlag.from_value slice[0_i32] rescue nil
+      return unless _command_flag = command_flag
+
+      case _command_flag
+      in .connection_reuse?
+        decision_flag = DecisionFlag.from_value slice[1_i32] rescue nil
+        return unless _decision_flag = decision_flag
+
+        return Tuple.new command_flag, _decision_flag
+      end
+    end
+
+    def notify_peer_termination?(command_flag : CommandFlag, closed_flag : ClosedFlag)
       raise Exception.new "Enhanced::WebSocket.notify_peer_termination!: Options.switcher.allowConnectionReuse is false." unless options.try &.switcher.try &.allowConnectionReuse
       raise Exception.new "Enhanced::WebSocket.notify_peer_termination!: Enhanced::WebSocket.confirmed_connection_reuse is false." if false === confirmed_connection_reuse?
       return if confirmed_connection_reuse?
 
+      notify_peer_termination! command_flag: command_flag, closed_flag: closed_flag unless pending_ping_command_bytes
+    end
+
+    def notify_peer_termination!(command_flag : CommandFlag, closed_flag : ClosedFlag)
       ping Bytes[command_flag.value, closed_flag.value]
+    end
+
+    def response_pending_ping!
+      return unless _pending_ping_command_bytes = pending_ping_command_bytes
+      slice = _pending_ping_command_bytes
+
+      parse_ping_command?(slice: slice).try do |tuple|
+        case tuple.first
+        in .connection_reuse?
+          decision_flag = response_peer_termination! command_flag: tuple.first, decision_flag: nil
+          self.confirmed_connection_reuse = true if decision_flag.confirmed?
+        end
+      end
     end
 
     private def response_peer_termination!(command_flag : CommandFlag, decision_flag : DecisionFlag?) : DecisionFlag
@@ -173,56 +181,35 @@ module SOCKS::Enhanced
       decision_flag
     end
 
-    protected def receive_peer_decision!(expect_command_flag : CommandFlag) : DecisionFlag
-      receive_buffer = uninitialized UInt8[2_i32]
-
-      loop do
-        receive = io.receive receive_buffer.to_slice
-
-        case receive.opcode
-        when .pong?
-          slice = receive_buffer.to_slice[0_i32, receive.size]
-          next unless 2_i32 == slice.size
-
-          received_command_flag = CommandFlag.from_value slice[0_i32] rescue nil
-          received_decision_flag = DecisionFlag.from_value slice[1_i32] rescue nil
-          next unless received_command_flag
-          next unless received_decision_flag
-
-          raise Exception.new String.build { |io| io << "Enhanced::WebSocket.receive_peer_decision!: ExpectCommandFlag (" << expect_command_flag << "), ReceivedCommandFlag (" << received_command_flag << ")." } unless expect_command_flag == received_command_flag
-
-          break received_decision_flag
-        end
-      end
+    def receive_peer_command_notify_decision?(expect_command_flag : CommandFlag) : DecisionFlag?
+      return if confirmed_connection_reuse?.is_a? Bool
+      receive_peer_command_notify_decision! expect_command_flag: expect_command_flag
     end
 
-    protected def receive_peer_command_notify_decision!(expect_command_flag : CommandFlag) : DecisionFlag
-      receive_buffer = uninitialized UInt8[2_i32]
+    private def receive_peer_command_notify_decision!(expect_command_flag : CommandFlag) : DecisionFlag
+      receive_buffer = uninitialized UInt8[4096_i32]
 
       loop do
         receive = io.receive receive_buffer.to_slice
 
         case receive.opcode
         when .ping?
-          slice = receive_buffer.to_slice[0_i32, receive.size]
-          next pong nil if slice.size < 2_i32
+          slice = receive_buffer.to_slice[0_i32, receive.size].dup
 
-          received_command_flag = CommandFlag.from_value slice[0_i32] rescue nil
-          next pong nil unless _received_command_flag = received_command_flag
+          parse_ping_command?(slice: slice).try do |tuple|
+            response_peer_termination! command_flag: tuple.first, decision_flag: nil
+          end
+        when .pong?
+          slice = receive_buffer.to_slice[0_i32, receive.size].dup
 
-          raise Exception.new String.build { |io| io << "Enhanced::WebSocket.receive_peer_command_notify_decision!: ExpectCommandFlag (" << expect_command_flag << "), ReceivedCommandFlag (" << received_command_flag << ")." } unless expect_command_flag == received_command_flag
+          parse_pong_command?(slice: slice).try do |tuple|
+            next unless tuple.first == expect_command_flag
 
-          case _received_command_flag
-          when CommandFlag::CONNECTION_REUSE
-            closed_flag = ClosedFlag.from_value slice[1_i32] rescue nil
-            next pong nil unless _closed_flag = closed_flag
+            case tuple.first
+            in .connection_reuse?
+              self.confirmed_connection_reuse = tuple.last.confirmed? ? true : false
 
-            decision_flag = response_peer_termination! command_flag: _received_command_flag, decision_flag: nil
-
-            if decision_flag.confirmed?
-              self.confirmed_connection_reuse = true
-
-              raise Exception.new "Enhanced::WebSocket.receive_peer_command_notify_decision!: Received Ping CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
+              return tuple.last
             end
           end
         end
