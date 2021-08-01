@@ -122,6 +122,7 @@ class SOCKS::SessionProcessor
 
       case transfer
       when .sent_done?
+        _session_inbound.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
         transfer.destination.close rescue nil unless transfer.destination.closed?
       when .receive_done?
         _session_inbound.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
