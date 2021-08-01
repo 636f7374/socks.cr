@@ -225,7 +225,7 @@ class SOCKS::SessionProcessor
       case transfer
       when .sent_done?
         transfer.source.close rescue nil unless transfer.source.closed?
-        enhanced_websocket.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
+        enhanced_websocket.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
       when .receive_done?
         transfer.source.close rescue nil unless transfer.source.closed?
       end

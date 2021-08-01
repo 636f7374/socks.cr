@@ -204,7 +204,7 @@ class SOCKS::Client < IO
     _holding = holding
 
     if _outbound.is_a? Enhanced::WebSocket
-      _outbound.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
+      _outbound.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
       _outbound.response_pending_ping! rescue nil
       _outbound.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE rescue nil
       raise Exception.new String.build { |io| io << "DecisionType received from IO (" << SOCKS::Enhanced::DecisionFlag::REFUSED << ")." } if false == _outbound.confirmed_connection_reuse?
@@ -217,7 +217,7 @@ class SOCKS::Client < IO
     if _holding.is_a? Enhanced::WebSocket
       outbound.close rescue nil
 
-      _holding.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
+      _holding.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
       _holding.response_pending_ping! rescue nil
       _holding.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE rescue nil
       raise Exception.new String.build { |io| io << "DecisionType received from IO (" << SOCKS::Enhanced::DecisionFlag::REFUSED << ")." } if false == _holding.confirmed_connection_reuse?
