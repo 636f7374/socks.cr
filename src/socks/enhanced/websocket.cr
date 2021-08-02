@@ -158,7 +158,7 @@ module SOCKS::Enhanced
     end
 
     def response_pending_ping!
-      return unless _pending_ping_command_bytes = pending_ping_command_bytes
+      return ping nil unless _pending_ping_command_bytes = pending_ping_command_bytes
       slice = _pending_ping_command_bytes
 
       parse_ping_command?(slice: slice).try do |tuple|

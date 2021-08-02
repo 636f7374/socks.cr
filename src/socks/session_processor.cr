@@ -135,9 +135,13 @@ class SOCKS::SessionProcessor
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
 
-      _session_inbound.response_pending_ping! rescue nil
-      _session_inbound.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE rescue nil
-      _session_inbound.pending_ping_command_bytes = nil
+      begin
+        _session_inbound.response_pending_ping!
+        _session_inbound.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
+        _session_inbound.ping nil unless _session_inbound.pending_ping_command_bytes
+      rescue ex
+        _session_inbound.confirmed_connection_reuse = false
+      end
 
       unless _session_inbound.confirmed_connection_reuse?
         transfer.cleanup
@@ -154,6 +158,7 @@ class SOCKS::SessionProcessor
 
       @connectionReuse = true
       _session_inbound.confirmed_connection_reuse = nil
+      _session_inbound.pending_ping_command_bytes = nil
 
       return true
     end
@@ -186,9 +191,17 @@ class SOCKS::SessionProcessor
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
 
-      _session_holding.response_pending_ping! rescue nil
-      _session_holding.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE rescue nil
-      _session_holding.pending_ping_command_bytes = nil
+      begin
+        _session_holding.response_pending_ping!
+        _session_holding.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
+
+        unless _session_holding.pending_ping_command_bytes
+          _session_holding.ping nil
+          _session_holding.skip_receive!
+        end
+      rescue ex
+        _session_holding.confirmed_connection_reuse = false
+      end
 
       unless _session_holding.confirmed_connection_reuse?
         transfer.cleanup
@@ -209,6 +222,7 @@ class SOCKS::SessionProcessor
 
       @connectionReuse = true
       _session_holding.confirmed_connection_reuse = nil
+      _session_holding.pending_ping_command_bytes = nil
 
       return true
     end
@@ -237,9 +251,13 @@ class SOCKS::SessionProcessor
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
 
-      enhanced_websocket.response_pending_ping! rescue nil
-      enhanced_websocket.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE rescue nil
-      enhanced_websocket.pending_ping_command_bytes = nil
+      begin
+        enhanced_websocket.response_pending_ping!
+        enhanced_websocket.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
+        enhanced_websocket.ping nil unless enhanced_websocket.pending_ping_command_bytes
+      rescue ex
+        enhanced_websocket.confirmed_connection_reuse = false
+      end
 
       unless enhanced_websocket.confirmed_connection_reuse?
         transfer.cleanup
@@ -262,6 +280,7 @@ class SOCKS::SessionProcessor
 
       @connectionReuse = true
       enhanced_websocket.confirmed_connection_reuse = nil
+      enhanced_websocket.pending_ping_command_bytes = nil
       connection_pool.unshift value: transfer
 
       return true
