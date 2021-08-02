@@ -194,11 +194,7 @@ class SOCKS::SessionProcessor
       begin
         _session_holding.response_pending_ping!
         _session_holding.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
-
-        unless _session_holding.pending_ping_command_bytes
-          _session_holding.ping nil
-          _session_holding.skip_receive!
-        end
+        _session_holding.ping nil unless _session_holding.pending_ping_command_bytes
       rescue ex
         _session_holding.confirmed_connection_reuse = false
       end
