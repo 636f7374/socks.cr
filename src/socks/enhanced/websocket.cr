@@ -109,7 +109,7 @@ module SOCKS::Enhanced
                 raise Exception.new "Enhanced::WebSocket.update_buffer: Received Pong CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
               in .refused?
                 self.confirmed_connection_reuse = false
-                raise Exception.new "Enhanced::WebSocket.update_buffer: Received Ping CommandFlag::CONNECTION_REUSE (DecisionFlag::REFUSED) from io."
+                raise Exception.new "Enhanced::WebSocket.update_buffer: Received Pong CommandFlag::CONNECTION_REUSE (DecisionFlag::REFUSED) from io."
               end
             end
           end
