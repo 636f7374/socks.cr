@@ -120,14 +120,8 @@ class SOCKS::SessionProcessor
       next sleep 0.25_f32.seconds unless transfer.done?
       transfer.destination.close rescue nil unless transfer.destination.closed?
 
-      case transfer
-      when .sent_done?
-        _session_inbound.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
-        transfer.destination.close rescue nil unless transfer.destination.closed?
-      when .receive_done?
-        _session_inbound.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
-        transfer.destination.close rescue nil unless transfer.destination.closed?
-      end
+      _session_inbound.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
+      transfer.destination.close rescue nil unless transfer.destination.closed?
 
       break
     end
@@ -137,8 +131,7 @@ class SOCKS::SessionProcessor
 
       begin
         _session_inbound.response_pending_ping!
-        _session_inbound.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
-        _session_inbound.ping nil unless _session_inbound.pending_ping_command_bytes
+        _session_inbound.receive_peer_command_notify_decision! expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
       rescue ex
         _session_inbound.confirmed_connection_reuse = false
       end
@@ -176,14 +169,8 @@ class SOCKS::SessionProcessor
         next
       end
 
-      case transfer
-      when .sent_done?
-        _session_holding.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
-        transfer.destination.close rescue nil unless transfer.destination.closed?
-      when .receive_done?
-        _session_holding.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
-        transfer.destination.close rescue nil unless transfer.destination.closed?
-      end
+      _session_holding.notify_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
+      transfer.destination.close rescue nil unless transfer.destination.closed?
 
       break
     end
@@ -193,8 +180,7 @@ class SOCKS::SessionProcessor
 
       begin
         _session_holding.response_pending_ping!
-        _session_holding.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
-        _session_holding.ping nil unless _session_holding.pending_ping_command_bytes
+        _session_holding.receive_peer_command_notify_decision! expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
       rescue ex
         _session_holding.confirmed_connection_reuse = false
       end
@@ -233,13 +219,8 @@ class SOCKS::SessionProcessor
     loop do
       next sleep 0.25_f32.seconds unless transfer.sent_done?
 
-      case transfer
-      when .sent_done?
-        transfer.source.close rescue nil unless transfer.source.closed?
-        enhanced_websocket.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
-      when .receive_done?
-        transfer.source.close rescue nil unless transfer.source.closed?
-      end
+      transfer.source.close rescue nil unless transfer.source.closed?
+      enhanced_websocket.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
 
       break
     end
@@ -249,8 +230,7 @@ class SOCKS::SessionProcessor
 
       begin
         enhanced_websocket.response_pending_ping!
-        enhanced_websocket.receive_peer_command_notify_decision? expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
-        enhanced_websocket.ping nil unless enhanced_websocket.pending_ping_command_bytes
+        enhanced_websocket.receive_peer_command_notify_decision! expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
       rescue ex
         enhanced_websocket.confirmed_connection_reuse = false
       end

@@ -120,15 +120,28 @@ struct SOCKS::Frames
 
       case destination_address
       in Socket::IPAddress
-        memory.write destination_address.to_slice
-        memory.write_bytes destination_address.port.to_u16, IO::ByteFormat::BigEndian
+        begin
+          write_destination_ip_address io: memory, destination_address: destination_address
+        rescue ex : ArgumentError
+          destination_address = Address.new host: destination_address.address, port: destination_address.port
+          write_destination_address io: memory, destination_address: destination_address
+        end
       in Address
-        memory.write Bytes[destination_address.host.size.to_u8]
-        memory.write destination_address.host.to_slice
-        memory.write_bytes destination_address.port.to_u16, IO::ByteFormat::BigEndian
+        write_destination_address io: memory, destination_address: destination_address
       end
 
       io.write memory.to_slice
+    end
+
+    private def write_destination_ip_address(io : IO, destination_address : Socket::IPAddress)
+      io.write destination_address.to_slice
+      io.write_bytes destination_address.port.to_u16, IO::ByteFormat::BigEndian
+    end
+
+    private def write_destination_address(io : IO, destination_address : Address)
+      io.write Bytes[destination_address.host.size.to_u8]
+      io.write destination_address.host.to_slice
+      io.write_bytes destination_address.port.to_u16, IO::ByteFormat::BigEndian
     end
 
     def get_destination_address : Socket::IPAddress | Address

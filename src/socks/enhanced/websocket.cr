@@ -56,7 +56,7 @@ module SOCKS::Enhanced
     end
 
     def confirmed_connection_reuse?
-      @mutex.synchronize { @confirmedConnectionReuse }
+      @mutex.synchronize { @confirmedConnectionReuse.dup }
     end
 
     def pending_ping_command_bytes=(value : Bytes?)
@@ -77,11 +77,13 @@ module SOCKS::Enhanced
         when .binary?
           self.windowRemaining.set receive.size
 
-          buffer.rewind
-          buffer.clear
+          @mutex.synchronize do
+            buffer.rewind
+            buffer.clear
 
-          buffer.write receive_buffer.to_slice[0_i32, receive.size]
-          buffer.rewind
+            buffer.write receive_buffer.to_slice[0_i32, receive.size]
+            buffer.rewind
+          end
 
           break
         when .ping?
@@ -107,7 +109,7 @@ module SOCKS::Enhanced
                 raise Exception.new "Enhanced::WebSocket.update_buffer: Received Pong CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
               in .refused?
                 self.confirmed_connection_reuse = false
-                raise Exception.new "Enhanced::WebSocket.update_buffer: Received Pong CommandFlag::CONNECTION_REUSE (DecisionFlag::REFUSED) from io."
+                raise Exception.new "Enhanced::WebSocket.update_buffer: Received Ping CommandFlag::CONNECTION_REUSE (DecisionFlag::REFUSED) from io."
               end
             end
           end
@@ -146,11 +148,7 @@ module SOCKS::Enhanced
     end
 
     def notify_peer_termination?(command_flag : CommandFlag, closed_flag : ClosedFlag)
-      raise Exception.new "Enhanced::WebSocket.notify_peer_termination!: Options.switcher.allowConnectionReuse is false." unless options.try &.switcher.try &.allowConnectionReuse
-      raise Exception.new "Enhanced::WebSocket.notify_peer_termination!: Enhanced::WebSocket.confirmed_connection_reuse is false." if false === confirmed_connection_reuse?
-      return if confirmed_connection_reuse?
-
-      notify_peer_termination! command_flag: command_flag, closed_flag: closed_flag unless pending_ping_command_bytes
+      notify_peer_termination! command_flag: command_flag, closed_flag: closed_flag
     end
 
     def notify_peer_termination!(command_flag : CommandFlag, closed_flag : ClosedFlag)
@@ -158,38 +156,36 @@ module SOCKS::Enhanced
     end
 
     def response_pending_ping!
-      return ping nil unless _pending_ping_command_bytes = pending_ping_command_bytes
+      return unless _pending_ping_command_bytes = pending_ping_command_bytes
       slice = _pending_ping_command_bytes
 
       parse_ping_command?(slice: slice).try do |tuple|
         case tuple.first
         in .connection_reuse?
-          decision_flag = response_peer_termination! command_flag: tuple.first, decision_flag: nil
-          self.confirmed_connection_reuse = true if decision_flag.confirmed?
+          response_peer_termination! command_flag: tuple.first, decision_flag: nil
         end
       end
     end
 
-    private def response_peer_termination!(command_flag : CommandFlag, decision_flag : DecisionFlag?) : DecisionFlag
+    private def response_peer_termination!(command_flag : CommandFlag, decision_flag : DecisionFlag?)
       unless decision_flag
         decision_flag = options.try &.switcher.try &.allowConnectionReuse ? DecisionFlag::CONFIRMED : DecisionFlag::REFUSED
-        decision_flag = DecisionFlag::REFUSED if false == self.confirmed_connection_reuse?
+        decision_flag = DecisionFlag::REFUSED if false == confirmed_connection_reuse?
       end
 
       pong Bytes[command_flag.value, decision_flag.value]
-
-      decision_flag
     end
 
-    def receive_peer_command_notify_decision?(expect_command_flag : CommandFlag) : DecisionFlag?
-      return if confirmed_connection_reuse?.is_a? Bool
-      receive_peer_command_notify_decision! expect_command_flag: expect_command_flag
-    end
-
-    private def receive_peer_command_notify_decision!(expect_command_flag : CommandFlag) : DecisionFlag
+    def receive_peer_command_notify_decision!(expect_command_flag : CommandFlag) : DecisionFlag
       receive_buffer = uninitialized UInt8[4096_i32]
 
+      finished_passive = false
+      finished_passive = true if pending_ping_command_bytes
+      finished_active = false
+      finished_active = true if confirmed_connection_reuse?.is_a? Bool
+
       loop do
+        break (confirmed_connection_reuse? ? DecisionFlag::CONFIRMED : DecisionFlag::REFUSED) if finished_passive && finished_active
         receive = io.receive receive_buffer.to_slice
 
         case receive.opcode
@@ -197,6 +193,7 @@ module SOCKS::Enhanced
           slice = receive_buffer.to_slice[0_i32, receive.size].dup
 
           parse_ping_command?(slice: slice).try do |tuple|
+            finished_passive = true
             response_peer_termination! command_flag: tuple.first, decision_flag: nil
           end
         when .pong?
@@ -207,9 +204,8 @@ module SOCKS::Enhanced
 
             case tuple.first
             in .connection_reuse?
+              finished_active = true
               self.confirmed_connection_reuse = tuple.last.confirmed? ? true : false
-
-              return tuple.last
             end
           end
         end
@@ -228,7 +224,7 @@ module SOCKS::Enhanced
       return 0_i32 if slice.empty?
       update_buffer if windowRemaining.get.zero?
 
-      length = buffer.read slice
+      length = @mutex.synchronize { buffer.read slice }
       self.windowRemaining.add -length
 
       length
