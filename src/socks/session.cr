@@ -49,6 +49,10 @@ class SOCKS::Session < IO
     @sourceTlsSockets = source_tls_sockets
   end
 
+  def source_tls_sockets=(value : Set(OpenSSL::SSL::Socket::Server))
+    @sourceTlsSockets = value
+  end
+
   def source_tls_sockets
     @sourceTlsSockets ||= Set(OpenSSL::SSL::Socket::Server).new
   end
@@ -57,6 +61,10 @@ class SOCKS::Session < IO
     source_tls_contexts = @sourceTlsContexts ||= Set(OpenSSL::SSL::Context::Server).new
     source_tls_contexts << value
     @sourceTlsContexts = source_tls_contexts
+  end
+
+  def source_tls_contexts=(value : Set(OpenSSL::SSL::Context::Server))
+    @sourceTlsContexts = value
   end
 
   def source_tls_contexts
@@ -69,6 +77,10 @@ class SOCKS::Session < IO
     @destinationTlsSockets = destination_tls_sockets
   end
 
+  def destination_tls_sockets=(value : Set(OpenSSL::SSL::Socket::Client))
+    @destinationTlsSockets = value
+  end
+
   def destination_tls_sockets
     @destinationTlsSockets ||= Set(OpenSSL::SSL::Socket::Client).new
   end
@@ -79,8 +91,36 @@ class SOCKS::Session < IO
     @destinationTlsContexts = destination_tls_contexts
   end
 
+  def destination_tls_contexts=(value : Set(OpenSSL::SSL::Context::Client))
+    @destinationTlsContexts = value
+  end
+
   def destination_tls_contexts
     @destinationTlsContexts ||= Set(OpenSSL::SSL::Context::Client).new
+  end
+
+  def connection_identifier=(value : UUID)
+    @connectionIdentifier = value
+  end
+
+  def connection_identifier
+    @connectionIdentifier
+  end
+
+  def connection_pause_pending=(value : Bool?)
+    @connectionPausePending = value
+  end
+
+  def connection_pause_pending? : Bool?
+    @connectionPausePending
+  end
+
+  def state=(value : Enhanced::State::WebSocket?)
+    @state = value
+  end
+
+  def state : Enhanced::State::WebSocket?
+    @state
   end
 
   def read(slice : Bytes) : Int32
@@ -95,10 +135,10 @@ class SOCKS::Session < IO
 
   def close
     inbound.close rescue nil
-    holding.try &.close rescue nil
+    holding.try { |_holding| _holding.close rescue nil }
 
     if syncCloseOutbound
-      outbound.try &.close rescue nil
+      outbound.try { |_outbound| _outbound.close rescue nil }
     end
 
     true
@@ -107,7 +147,39 @@ class SOCKS::Session < IO
   def cleanup : Bool
     close
     free_tls!
-    reset reset_tls: true
+    reset_socket reset_tls: true
+
+    true
+  end
+
+  def cleanup(sd_flag : Transfer::SDFlag, free_tls : Bool, reset : Bool = true)
+    case sd_flag
+    in .source?
+      @inbound.try &.close rescue nil
+    in .destination?
+      @outbound.try &.close rescue nil
+    end
+
+    case sd_flag
+    in .source?
+      free_source_tls
+    in .destination?
+      free_destination_tls
+    end
+
+    reset_socket sd_flag: sd_flag, reset_tls: free_tls if reset
+  end
+
+  private def free_source_tls
+    source_tls_sockets.try &.each &.free
+    source_tls_contexts.try &.each &.free
+
+    true
+  end
+
+  private def free_destination_tls
+    destination_tls_sockets.try &.each &.free
+    destination_tls_contexts.try &.each &.free
 
     true
   end
@@ -148,7 +220,7 @@ class SOCKS::Session < IO
     end
   end
 
-  def reset(reset_tls : Bool)
+  def reset_socket(reset_tls : Bool)
     closed_memory = IO::Memory.new 0_i32
     closed_memory.close
 
@@ -164,11 +236,11 @@ class SOCKS::Session < IO
     end
   end
 
-  def reset_peer(side : Transfer::Side, reset_tls : Bool)
+  def reset_socket(sd_flag : Transfer::SDFlag, reset_tls : Bool)
     closed_memory = IO::Memory.new 0_i32
     closed_memory.close
 
-    case side
+    case sd_flag
     in .source?
       @inbound = closed_memory
 
@@ -190,47 +262,176 @@ class SOCKS::Session < IO
     inbound.closed?
   end
 
-  def process_upgrade!(server : Server) : HTTP::Request?
+  def process_upgrade!(server : Server, pause_pool : PausePool? = nil) : HTTP::Request?
     _wrapper = options.server.wrapper
 
     case _wrapper
     in Options::Server::Wrapper::WebSocket
-      upgrade_websocket! server: server
-    in SOCKS::Options::Server::Wrapper
+      upgrade_websocket! server: server, pause_pool: pause_pool
+    in Options::Server::Wrapper
     in Nil
     end
   end
 
-  private def upgrade_websocket!(server : Server) : HTTP::Request
+  private def upgrade_websocket!(server : Server, pause_pool : PausePool? = nil) : HTTP::Request
     request = HTTP::Request.from_io io: inbound
-    upgrade_websocket! request: request, server: server
+    upgrade_websocket! request: request, server: server, pause_pool: pause_pool
   end
 
-  private def upgrade_websocket!(request : HTTP::Request | HTTP::Status | Nil, server : Server) : HTTP::Request
+  private def upgrade_websocket!(request : HTTP::Request | HTTP::Status | Nil, server : Server, pause_pool : PausePool? = nil) : HTTP::Request
     response, key, request = HTTP::WebSocket.response_check_request_validity! socket: inbound, request: request
     check_authorization! server: server, request: request, response: response
-
-    request.headers["Sec-WebSocket-Extensions"]?.try do |text_sec_websocket_extensions|
-      sec_websocket_extensions = text_sec_websocket_extensions.split ", "
-
-      sec_websocket_extensions.each do |sec_websocket_extension|
-        extension_flag = SOCKS::Enhanced::ExtensionFlag.parse sec_websocket_extension rescue nil
-        next unless extension_flag
-
-        case extension_flag
-        in .assign_identifier?
-        in .connection_reuse?
-          response.headers.add key: "Connection-Reuse", value: options.switcher.allowConnectionReuse ? "SUPPORTED" : "UNSPPORTED"
-        end
-      end
-    end
+    extensions = process_websocket_request request: request, response: response, pause_pool: pause_pool
 
     HTTP::WebSocket.accept! socket: inbound, response: response, key: key, request: request
-
-    protocol = HTTP::WebSocket::Protocol.new io: inbound, masked: false, sync_close: true
-    @inbound = Enhanced::WebSocket.new io: protocol, options: options
+    process_websocket_accept extensions: extensions, pause_pool: pause_pool
 
     request
+  end
+
+  private def process_websocket_accept(extensions : Set(Enhanced::ExtensionFlag), pause_pool : PausePool? = nil)
+    protocol = HTTP::WebSocket::Protocol.new io: inbound, masked: false, sync_close: true
+    @inbound = _inbound = Enhanced::WebSocket.new io: protocol, options: options
+
+    _inbound.allow_connection_reuse = extensions.includes?(Enhanced::ExtensionFlag::CONNECTION_REUSE) && options.switcher.allowConnectionReuse
+    _inbound.allow_connection_pause = extensions.includes?(Enhanced::ExtensionFlag::CONNECTION_PAUSE) && options.switcher.allowConnectionPause
+    self.connection_identifier.try { |_connection_identifier| _inbound.connection_identifier = _connection_identifier }
+
+    process_connection_pause_pending inbound: _inbound, pause_pool: pause_pool
+    restore_state inbound: _inbound
+
+    case _wrapper = options.server.wrapper
+    in Options::Server::Wrapper::WebSocket
+      _inbound.maximum_sent_sequence = _wrapper.maximumSentSequence
+      _inbound.maximum_receive_sequence = _wrapper.maximumReceiveSequence
+    in Options::Server::Wrapper
+    in Nil
+    end
+
+    @inbound = _inbound
+  end
+
+  private def process_connection_pause_pending(inbound : Enhanced::WebSocket, pause_pool : PausePool? = nil)
+    return unless pause_pool
+    return unless _connection_identifier = self.connection_identifier
+    return unless inbound.allow_connection_pause?
+    return unless self.connection_pause_pending?
+    return unless entry = inbound.process_server_side_connection_pause_pending! connection_identifier: _connection_identifier, pause_pool: pause_pool
+
+    restore_outbound entry: entry
+    self.state = entry.state
+    self.connection_pause_pending = nil
+  end
+
+  private def restore_outbound(entry : PausePool::Entry)
+    entry_transfer = entry.transfer
+    entry_transfer.destination_tls_sockets.try { |_destination_tls_sockets| self.destination_tls_sockets = _destination_tls_sockets }
+    entry_transfer.destination_tls_contexts.try { |_destination_tls_contexts| self.destination_tls_contexts = _destination_tls_contexts }
+    @outbound = entry_transfer.destination
+  end
+
+  private def restore_state(inbound : Enhanced::WebSocket)
+    self.state.try { |_state| inbound.state = _state }
+    self.state = nil
+  end
+
+  private def process_websocket_request(request : HTTP::Request, response : HTTP::Server::Response, pause_pool : PausePool? = nil) : Set(Enhanced::ExtensionFlag)
+    extensions = unwrap_websocket_request_extensions request: request
+
+    value = process_websocket_request_connection_identifier request: request, response: response, extensions: extensions, pause_pool: pause_pool
+    process_websocket_request_connection_reuse response: response if extensions.includes? Enhanced::ExtensionFlag::CONNECTION_REUSE
+
+    case value
+    in Tuple(Enhanced::ExtensionFlag, UUID)
+      if !options.switcher.allowConnectionReuse || pause_pool.nil?
+        response.headers.add key: "Connection-Pause", value: ConnectionPauseDecisionFlag::UNSUPPORTED.to_s
+      else
+        response.headers.add key: "Connection-Pause", value: ConnectionPauseDecisionFlag::SUPPORTED.to_s
+        self.connection_identifier = value.last
+      end
+    in UUID
+      if !options.switcher.allowConnectionReuse || pause_pool.nil?
+        response.headers.add key: "Connection-Pause", value: ConnectionPauseDecisionFlag::UNSUPPORTED.to_s
+
+        return extensions
+      end
+
+      case entry = pause_pool.get? connection_identifier: value
+      in PausePool::Entry
+        response.headers.add key: "Connection-Pause", value: ConnectionPauseDecisionFlag::VALID.to_s
+
+        self.connection_pause_pending = false
+        self.connection_identifier = value
+        self.state = entry.state
+
+        restore_outbound entry: entry
+      in Nil
+        decision_flag = pause_pool.connection_identifier_includes?(connection_identifier: value) ? ConnectionPauseDecisionFlag::PENDING : ConnectionPauseDecisionFlag::INVALID
+        response.headers.add key: "Connection-Pause", value: decision_flag.to_s
+        return extensions unless decision_flag.pending?
+
+        self.connection_pause_pending = true
+        self.connection_identifier = value
+      end
+    in ConnectionIdentifierDecisionFlag
+    in Nil
+    end
+
+    extensions
+  end
+
+  private def unwrap_websocket_request_extensions(request : HTTP::Request) : Set(Enhanced::ExtensionFlag)
+    extensions = Set(Enhanced::ExtensionFlag).new
+    return extensions unless text_sec_websocket_extensions = request.headers["Sec-WebSocket-Extensions"]?
+    sec_websocket_extensions = text_sec_websocket_extensions.split ", "
+
+    sec_websocket_extensions.each do |sec_websocket_extension|
+      extension_flag = Enhanced::ExtensionFlag.parse sec_websocket_extension rescue nil
+      extensions << extension_flag if extension_flag
+    end
+
+    extensions
+  end
+
+  private def process_websocket_request_connection_identifier(request : HTTP::Request, response : HTTP::Server::Response, extensions : Set(Enhanced::ExtensionFlag), pause_pool : PausePool? = nil) : Tuple(Enhanced::ExtensionFlag, UUID) | ConnectionIdentifierDecisionFlag | UUID | Nil
+    text_connection_identifier = request.headers["Connection-Identifier"]?
+
+    if text_connection_identifier.nil? && extensions.includes?(Enhanced::ExtensionFlag::ASSIGN_IDENTIFIER)
+      return if !options.switcher.enableConnectionIdentifier || pause_pool.nil?
+
+      self.connection_identifier = _connection_identifier = pause_pool.assign_connection_identifier
+      response.headers.add key: "Connection-Identifier", value: _connection_identifier.to_s
+
+      return Tuple.new Enhanced::ExtensionFlag::ASSIGN_IDENTIFIER, _connection_identifier
+    end
+
+    if !options.switcher.enableConnectionIdentifier && extensions.includes?(Enhanced::ExtensionFlag::ASSIGN_IDENTIFIER)
+      response.headers.add key: "Connection-Identifier", value: ConnectionIdentifierDecisionFlag::UNSUPPORTED.to_s
+
+      return ConnectionIdentifierDecisionFlag::UNSUPPORTED
+    end
+
+    if text_connection_identifier
+      return if text_connection_identifier.empty?
+      _connection_identifier = UUID.new value: text_connection_identifier rescue nil
+    end
+
+    unless _connection_identifier
+      response.headers.add key: "Connection-Identifier", value: ConnectionIdentifierDecisionFlag::INVALID_FORMAT.to_s
+
+      return ConnectionIdentifierDecisionFlag::INVALID_FORMAT
+    end
+
+    response.headers.add key: "Connection-Identifier", value: ConnectionIdentifierDecisionFlag::VALID_FORMAT.to_s
+    _connection_identifier
+  end
+
+  private def process_websocket_request_connection_reuse(response : HTTP::Server::Response)
+    response.headers.add key: "Connection-Reuse", value: options.switcher.allowConnectionReuse ? ConnectionReuseDecisionFlag::SUPPORTED.to_s : ConnectionReuseDecisionFlag::UNSUPPORTED.to_s
+  end
+
+  private def process_websocket_request_connection_pause(response : HTTP::Server::Response, extensions : Set(Enhanced::ExtensionFlag))
+    response.headers.add key: "Connection-Pause", value: options.switcher.allowConnectionPause ? ConnectionPauseDecisionFlag::SUPPORTED.to_s : ConnectionPauseDecisionFlag::UNSUPPORTED.to_s
   end
 
   def check_authorization!(server : Server, request : HTTP::Request, response : HTTP::Server::Response)

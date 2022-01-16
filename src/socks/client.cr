@@ -120,6 +120,22 @@ class SOCKS::Client < IO
     @holding
   end
 
+  def connection_identifier=(value : UUID)
+    @connectionIdentifier = value
+  end
+
+  def connection_identifier
+    @connectionIdentifier
+  end
+
+  def connection_pause_pending=(value : Bool?)
+    @connectionPausePending = value
+  end
+
+  def connection_pause_pending? : Bool?
+    @connectionPausePending
+  end
+
   def local_address : Socket::Address?
     _io = outbound
     _io.responds_to?(:local_address) ? _io.local_address : nil
@@ -153,18 +169,45 @@ class SOCKS::Client < IO
     outbound.closed?
   end
 
-  def process_upgrade!
+  def reset_socket : Bool
+    closed_memory = IO::Memory.new 0_i32
+    closed_memory.close
+
+    @outbound = closed_memory
+    @holding = nil
+
+    true
+  end
+
+  def notify_peer_incoming
+    _outbound = outbound
+    _holding = holding
+
+    _outbound.notify_peer_incoming if _outbound.is_a? Enhanced::WebSocket
+    _holding.notify_peer_incoming if _holding.is_a? Enhanced::WebSocket
+
+    true
+  end
+
+  def update_receive_rescue_buffer(slice : Bytes)
+    _outbound = outbound
+    _outbound.update_receive_rescue_buffer slice: slice if _outbound.responds_to? :update_receive_rescue_buffer
+  end
+
+  def process_upgrade!(state : SOCKS::Enhanced::State? = nil)
     _wrapper = options.client.wrapper
 
     case _wrapper
     in SOCKS::Options::Client::Wrapper::WebSocket
-      upgrade_websocket! host: _wrapper.address.host, port: _wrapper.address.port, resource: _wrapper.resource, headers: _wrapper.headers.dup, data_raw: _wrapper.dataRaw
+      upgrade_websocket! state: state, host: _wrapper.address.host, port: _wrapper.address.port, resource: _wrapper.resource, headers: _wrapper.headers.dup, data_raw: _wrapper.dataRaw
     in SOCKS::Options::Client::Wrapper
     in Nil
     end
   end
 
-  private def upgrade_websocket!(host : String, port : Int32, resource : String = "/", headers : HTTP::Headers = HTTP::Headers.new, data_raw : String? = nil)
+  private def upgrade_websocket!(state : SOCKS::Enhanced::State?, host : String, port : Int32, resource : String = "/", headers : HTTP::Headers = HTTP::Headers.new, data_raw : String? = nil)
+    _state = state.is_a?(SOCKS::Enhanced::State::WebSocket) ? state : SOCKS::Enhanced::State::WebSocket.new
+
     case _wrapper_authorization = wrapper_authorization
     in Frames::WebSocketAuthorizationFlag
       case _wrapper_authorization
@@ -178,69 +221,176 @@ class SOCKS::Client < IO
     in Nil
     end
 
-    extensions = Set(Enhanced::ExtensionFlag).new
-    extensions << Enhanced::ExtensionFlag::CONNECTION_REUSE if options.switcher.allowConnectionReuse
-    extensions << Enhanced::ExtensionFlag::ASSIGN_IDENTIFIER if options.switcher.enableConnectionIdentifier
-    headers["Sec-WebSocket-Extensions"] = String.build { |io| io << extensions.map(&.to_s).join ", " } unless extensions.empty?
-
+    process_websocket_request headers: headers
     response, protocol = HTTP::WebSocket.handshake socket: outbound, host: host, port: port, resource: resource, headers: headers, data_raw: data_raw
-    outbound = Enhanced::WebSocket.new io: protocol, options: options
+    @outbound = _outbound = Enhanced::WebSocket.new io: protocol, options: options, state: _state
+    process_websocket_response response: response, outbound: _outbound
 
-    response_headers_connection_reuse = response.headers["Connection-Reuse"]?
-    outbound.confirmed_connection_reuse = false if options.switcher.allowConnectionReuse && response_headers_connection_reuse.nil?
-
-    response_headers_connection_reuse.try do |text_connection_reuse|
-      case text_connection_reuse
-      when "UNSUPPORTED"
-        outbound.confirmed_connection_reuse = false
-      end
-    end
-
-    @outbound = outbound
+    @outbound = _outbound
   end
 
-  def notify_peer_termination! : SOCKS::Enhanced::DecisionFlag
+  private def process_websocket_request(headers : HTTP::Headers) : Bool
+    _connection_identifier = connection_identifier
+
+    extensions = Set(Enhanced::ExtensionFlag).new
+    extensions << Enhanced::ExtensionFlag::ASSIGN_IDENTIFIER if options.switcher.enableConnectionIdentifier && !connection_identifier
+    extensions << Enhanced::ExtensionFlag::CONNECTION_PAUSE if options.switcher.allowConnectionPause
+    extensions << Enhanced::ExtensionFlag::CONNECTION_REUSE if options.switcher.allowConnectionReuse
+
+    headers["Sec-WebSocket-Extensions"] = String.build { |io| io << extensions.map(&.to_s).join ", " } unless extensions.empty?
+
+    if _connection_identifier && options.switcher.enableConnectionIdentifier
+      headers.add key: "Connection-Identifier", value: _connection_identifier.to_s
+    end
+
+    true
+  end
+
+  private def process_websocket_response(response : HTTP::Client::Response, outbound : Enhanced::WebSocket) : Bool
+    case _wrapper = options.client.wrapper
+    in SOCKS::Options::Client::Wrapper::WebSocket
+      outbound.maximum_sent_sequence = _wrapper.maximumSentSequence
+      outbound.maximum_receive_sequence = _wrapper.maximumReceiveSequence
+    in SOCKS::Options::Client::Wrapper
+    in Nil
+    end
+
+    connection_decision_identifier = process_websocket_response_connection_identifier response: response, outbound: outbound
+    process_websocket_response_connection_reuse response: response, outbound: outbound
+    process_websocket_response_connection_pause response: response, outbound: outbound, connection_decision_identifier: connection_decision_identifier
+    process_connection_pause_pending! outbound: outbound
+
+    true
+  end
+
+  private def process_connection_pause_pending!(outbound : Enhanced::WebSocket)
+    return unless self.connection_pause_pending?
+    outbound.process_client_side_connection_pause_pending!
+
+    self.connection_pause_pending = nil
+  end
+
+  private def process_websocket_response_connection_identifier(response : HTTP::Client::Response, outbound : Enhanced::WebSocket) : ConnectionIdentifierDecisionFlag | UUID | Nil
+    return unless options.switcher.enableConnectionIdentifier
+    return unless response_headers_connection_identifier = response.headers["Connection-Identifier"]?
+
+    decision_flag = ConnectionIdentifierDecisionFlag.parse response_headers_connection_identifier rescue nil
+    _connection_identifier = UUID.new value: response_headers_connection_identifier rescue nil unless decision_flag
+    value = decision_flag || _connection_identifier
+
+    case value
+    in ConnectionIdentifierDecisionFlag
+      if value.valid_format?
+        self.connection_identifier.try { |_connection_identifier| outbound.connection_identifier = _connection_identifier }
+      else
+        raise Exception.new String.build { |io| io << "SOCKS::Client.process_websocket_response_connection_identifier: " << "Abnormal status (" << value << ") received from IO." }
+      end
+    in UUID
+      self.connection_identifier = value
+      outbound.connection_identifier = value
+    in Nil
+    end
+
+    value
+  end
+
+  private def process_websocket_response_connection_reuse(response : HTTP::Client::Response, outbound : Enhanced::WebSocket) : Bool
+    return false unless options.switcher.allowConnectionReuse
+
+    unless response_headers_connection_reuse = response.headers["Connection-Reuse"]?
+      outbound.allow_connection_reuse = false
+
+      return false
+    end
+
+    decision_flag = ConnectionReuseDecisionFlag.parse response_headers_connection_reuse rescue nil
+
+    unless decision_flag
+      outbound.allow_connection_reuse = false
+
+      return false
+    end
+
+    case decision_flag
+    in .supported?
+      outbound.allow_connection_reuse = true
+    in .unsupported?
+      outbound.allow_connection_reuse = false
+    end
+
+    true
+  end
+
+  private def process_websocket_response_connection_pause(response : HTTP::Client::Response, outbound : Enhanced::WebSocket, connection_decision_identifier : ConnectionIdentifierDecisionFlag | UUID | Nil) : Bool
+    return false unless connection_decision_identifier
+    return false unless options.switcher.enableConnectionIdentifier
+    return false unless options.switcher.allowConnectionPause
+    return false unless response_headers_connection_pause = response.headers["Connection-Pause"]?
+
+    pause_decision_flag = ConnectionPauseDecisionFlag.parse response_headers_connection_pause rescue nil
+
+    unless pause_decision_flag
+      outbound.allow_connection_pause = false
+
+      return false
+    end
+
+    case connection_decision_identifier
+    in ConnectionIdentifierDecisionFlag
+      unless connection_decision_identifier.valid_format?
+        outbound.allow_connection_pause = false
+        raise Exception.new String.build { |io| io << "SOCKS::Client.process_websocket_response_connection_pause: " << "Abnormal status (" << pause_decision_flag << ") received from IO." }
+      end
+
+      case pause_decision_flag
+      when ConnectionPauseDecisionFlag::VALID
+        outbound.allow_connection_pause = true
+      when ConnectionPauseDecisionFlag::PENDING
+        outbound.allow_connection_pause = true
+        self.connection_pause_pending = true
+      else
+        outbound.allow_connection_pause = false
+        raise Exception.new String.build { |io| io << "SOCKS::Client.process_websocket_response_connection_pause: " << "Abnormal status (" << pause_decision_flag << ") received from IO." }
+      end
+    in UUID
+      unless pause_decision_flag.supported?
+        outbound.allow_connection_pause = false
+        raise Exception.new String.build { |io| io << "SOCKS::Client.process_websocket_response_connection_pause: " << "Abnormal status (" << pause_decision_flag << ") received from IO." }
+      end
+
+      outbound.allow_connection_pause = true
+    end
+
+    true
+  end
+
+  def notify_peer_negotiate(source : IO, command_flag : SOCKS::Enhanced::CommandFlag = SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE) : SOCKS::Enhanced::CommandFlag?
     _outbound = outbound
     _holding = holding
 
     if _outbound.is_a? Enhanced::WebSocket
-      begin
-        _outbound.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE
-        _outbound.response_pending_ping!
-        _outbound.receive_peer_command_notify_decision! expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
-      rescue ex
-        _outbound.confirmed_connection_reuse = false
-      end
+      _outbound.notify_peer_negotiate command_flag: command_flag
+      _outbound.process_negotiate source: source
 
-      raise Exception.new String.build { |io| io << "DecisionType received from Outbound IO (" << SOCKS::Enhanced::DecisionFlag::REFUSED << ")." } unless _outbound.confirmed_connection_reuse?
-      _outbound.confirmed_connection_reuse = nil
-      _outbound.pending_ping_command_bytes = nil
+      raise Exception.new String.build { |io| io << "SOCKS::Client.notify_peer_negotiate: outbound.final_command_flag? is Nil!" } unless _outbound.final_command_flag?
+      _outbound.reset_settings allow_connection_reuse: _outbound.allow_connection_reuse?, connection_identifier: _outbound.connection_identifier
 
-      return SOCKS::Enhanced::DecisionFlag::CONFIRMED
+      return _outbound.final_command_flag?
     end
 
     if _holding.is_a? Enhanced::WebSocket
       outbound.close rescue nil
+      _holding.notify_peer_negotiate command_flag: command_flag
+      _holding.process_negotiate source: source
 
-      begin
-        _holding.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE
-        _holding.response_pending_ping!
-        _holding.receive_peer_command_notify_decision! expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE rescue nil
-      rescue ex
-        _holding.confirmed_connection_reuse = false
-      end
-
-      raise Exception.new String.build { |io| io << "DecisionType received from Holding IO (" << SOCKS::Enhanced::DecisionFlag::REFUSED << ")." } unless _holding.confirmed_connection_reuse?
-      _holding.confirmed_connection_reuse = nil
-      _holding.pending_ping_command_bytes = nil
+      raise Exception.new String.build { |io| io << "SOCKS::Client.notify_peer_negotiate: holding.final_command_flag? is Nil!" } unless _holding.final_command_flag?
+      _holding.reset_settings allow_connection_reuse: _holding.allow_connection_reuse?, connection_identifier: _holding.connection_identifier
 
       @outbound = _holding
       @holding = nil
 
-      return SOCKS::Enhanced::DecisionFlag::CONFIRMED
+      return _holding.final_command_flag?
     end
-
-    SOCKS::Enhanced::DecisionFlag::REFUSED
   end
 
   def handshake! : Bool
@@ -256,7 +406,7 @@ class SOCKS::Client < IO
     if 1_i32 == uniq_authentication_methods.size
       case uniq_authentication_methods.first
       when .user_name_password?
-        raise Exception.new "Client.handshake!: Your authenticationMethods is UserNamePassword, but you did not provide Authenticate Frame." unless _authenticate_frame = authenticate_frame
+        raise Exception.new "Client.handshake!: authenticationMethods is UserNamePassword, but no Authenticate Frame is provided." unless _authenticate_frame = authenticate_frame
 
         frame_negotiate.authenticateFrame = _authenticate_frame
       when .no_authentication?
@@ -340,6 +490,8 @@ class SOCKS::Client < IO
       in Socket::IPAddress
       in Address
         delegator, fetch_type, ip_addresses = dnsResolver.getaddrinfo host: destination_address.host, port: destination_address.port
+
+        raise Exception.new String.build { |io| io << "Client.establish!: Unfortunately, DNS::Resolver.getaddrinfo! The host: (" << destination_address.host << ") & fetchType: (" << fetch_type << ")" << " IPAddress result is empty!" } if ip_addresses.empty?
         destination_address = ip_addresses.first
       end
     end
@@ -404,8 +556,22 @@ class SOCKS::Client < IO
       @outbound = associate_udp
       @holding = _outbound
     end
+
+    _outbound = outbound
+    _holding = holding
+
+    if _outbound.is_a? Enhanced::WebSocket
+      _outbound.resynchronize
+      _outbound.transporting = true
+    end
+
+    if _holding.is_a? Enhanced::WebSocket
+      _holding.resynchronize
+      _holding.transporting = true
+    end
   end
 end
 
+require "uuid"
 require "./layer/client/*"
 require "./enhanced/*"

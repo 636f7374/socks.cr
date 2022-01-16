@@ -1,266 +1,402 @@
 class SOCKS::SessionProcessor
-  property session : Session
-  getter callback : Proc(Transfer, UInt64, UInt64, Nil)?
-  getter heartbeatCallback : Proc(Transfer, Time::Span, Bool)?
-  getter connectionReuse : Bool?
-
-  def initialize(@session : Session, @callback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Time::Span, Bool)? = nil)
-    @connectionReuse = nil
+  enum SideFlag : UInt8
+    INBOUND  = 0_u8
+    HOLDING  = 1_u8
+    OUTBOUND = 2_u8
   end
 
-  def perform(server : Server)
-    return session.cleanup unless outbound = session.outbound
+  property session : Session
+  getter finishCallback : Proc(Transfer, UInt64, UInt64, Nil)?
+  getter heartbeatCallback : Proc(Transfer, Time::Span, Bool)?
 
-    transfer = Transfer.new source: session, destination: outbound, callback: callback, heartbeatCallback: heartbeat_proc
-    set_transfer_options transfer: transfer
-    session.set_transfer_tls transfer: transfer, reset: true
+  def initialize(@session : Session, @finishCallback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Time::Span, Bool)? = nil)
+  end
 
-    perform transfer: transfer
-    transfer.reset!
+  private def set_transfer_options(transfer : Transfer, exceed_threshold_flag : Transfer::ExceedThresholdFlag)
+    # This function is used as an overridable.
+    # E.g. SessionID.
+
+    __set_transfer_options transfer: transfer, exceed_threshold_flag: exceed_threshold_flag
+  end
+
+  private def __set_transfer_options(transfer : Transfer, exceed_threshold_flag : Transfer::ExceedThresholdFlag)
+    transfer.heartbeatInterval = session.options.session.heartbeatInterval
+    transfer.aliveInterval = session.options.session.aliveInterval
+    transfer.finishCallback = finishCallback
+    transfer.heartbeatCallback = heartbeatCallback ? heartbeatCallback : heartbeat_proc
+    transfer.exceedThresholdFlag.set exceed_threshold_flag
+
+    transfer_source = transfer.source
+    transfer_destination = transfer.destination
+
+    if transfer_source.is_a? Session
+      session_inbound = transfer_source.inbound
+      session_holding = transfer_source.holding
+
+      enhanced_websocket = session_inbound if session_inbound.is_a? Enhanced::WebSocket
+      enhanced_websocket = session_holding if session_holding.is_a? Enhanced::WebSocket unless enhanced_websocket
+
+      if enhanced_websocket.is_a?(Enhanced::WebSocket) && enhanced_websocket.allow_connection_pause?
+        session.options.server.pausePool.try &.socketSwitchSeconds.try { |socket_switch_seconds| transfer.socketSwitchSeconds.set socket_switch_seconds.to_i.to_u64 }
+        session.options.server.pausePool.try &.socketSwitchBytes.try { |socket_switch_bytes| transfer.socketSwitchBytes.set socket_switch_bytes }
+        session.options.server.pausePool.try &.socketSwitchExpression.try { |socket_switch_expression| transfer.socketSwitchExpression.set socket_switch_expression }
+      end
+    end
+
+    if transfer_destination.is_a? Client
+      transfer_destination_options = transfer_destination.options
+      transfer_destination_outbound = transfer_destination.outbound
+
+      if transfer_destination_outbound.is_a?(Enhanced::WebSocket) && transfer_destination_outbound.allow_connection_pause?
+        transfer_destination_options.client.pausePool.try &.socketSwitchSeconds.try { |socket_switch_seconds| transfer.socketSwitchSeconds.set socket_switch_seconds.to_i.to_u64 }
+        transfer_destination_options.client.pausePool.try &.socketSwitchBytes.try { |socket_switch_bytes| transfer.socketSwitchBytes.set socket_switch_bytes }
+        transfer_destination_options.client.pausePool.try &.socketSwitchExpression.try { |socket_switch_expression| transfer.socketSwitchExpression.set socket_switch_expression }
+      end
+
+      if transfer_destination.connection_identifier && transfer_destination_options
+        transfer.heartbeatInterval = transfer_destination_options.session.heartbeatInterval
+        transfer.aliveInterval = transfer_destination_options.session.aliveInterval
+      end
+    end
+
+    if transfer.destination.is_a? Layer::Server::UDPOutbound
+      transfer.aliveInterval = session.options.session.udpAliveInterval
+    end
+  end
+
+  def perform(server : Server, pause_pool : PausePool? = nil)
+    flag = perform_once server: server, pause_pool: pause_pool
 
     loop do
-      break unless session.options.switcher.allowConnectionReuse
-      break unless check_support_connection_reuse?
-      break if session.closed?
-      break unless connectionReuse
+      case flag
+      in Enhanced::CommandFlag
+        case flag
+        in .connection_reuse?
+        in .connection_pause?
+          break
+        end
+      in Bool
+        session.connection_identifier.try { |_connection_identifier| pause_pool.try &.remove_connection_identifier connection_identifier: _connection_identifier }
+
+        break
+      end
 
       begin
         server.establish! session
       rescue ex
-        session.cleanup rescue nil
-        session.reset reset_tls: true
+        session.connection_identifier.try { |_connection_identifier| pause_pool.try &.remove_connection_identifier connection_identifier: _connection_identifier }
+
+        session.syncCloseOutbound = true
+        session.cleanup
 
         break
       end
 
-      unless outbound = session.outbound
-        session.cleanup rescue nil
-        session.reset reset_tls: true
+      flag = perform_once server: server, pause_pool: pause_pool
 
-        break
-      end
-
-      transfer.destination = outbound
-      perform transfer: transfer
-      transfer.reset!
+      next
     end
   end
 
-  private def perform(transfer : Transfer)
-    @connectionReuse = nil
-    transfer.perform
+  def perform_once(server : Server, pause_pool : PausePool? = nil) : Enhanced::CommandFlag | Bool
+    unless outbound = session.outbound
+      session.connection_identifier.try { |_connection_identifier| pause_pool.try &.remove_connection_identifier connection_identifier: _connection_identifier }
 
-    loop do
-      break if check_inbound_connection_reuse transfer: transfer
-      break if check_holding_connection_reuse transfer: transfer
+      session.syncCloseOutbound = true
+      session.cleanup
 
-      if transfer.done?
-        transfer.cleanup
-        session.reset reset_tls: true
+      return false
+    end
 
-        @connectionReuse = false
+    transfer = Transfer.new source: session, destination: outbound, finishCallback: nil, heartbeatCallback: nil
+    perform transfer: transfer, pause_pool: pause_pool
+  end
+
+  def perform(outbound : IO, reuse_pool : ReusePool? = nil) : Enhanced::CommandFlag | Bool
+    transfer = Transfer.new source: session, destination: outbound, finishCallback: nil, heartbeatCallback: nil
+    perform transfer: transfer, reuse_pool: reuse_pool
+  end
+
+  {% for name in ["inbound", "outbound"] %}
+  def get_{{name.id}}_enhanced_websocket?(session : Session) : Tuple(SideFlag, Enhanced::WebSocket)?
+    {% if name == "inbound" %}
+      session_inbound = session.inbound
+      return Tuple.new SideFlag::INBOUND, session_inbound if session_inbound.is_a? Enhanced::WebSocket
+
+      session_holding = session.holding
+      return Tuple.new SideFlag::HOLDING,  session_holding if session_holding.is_a? Enhanced::WebSocket
+    {% else %}
+      session_outbound = session.outbound
+      return unless session_outbound.is_a? Client
+
+      enhanced_websocket = session_outbound.outbound
+      return unless enhanced_websocket.is_a? Enhanced::WebSocket
+
+      return Tuple.new SideFlag::OUTBOUND, enhanced_websocket
+    {% end %}
+  end
+
+  {% if name == "inbound" %}
+    private def perform(transfer : Transfer, pause_pool : PausePool? = nil) : Enhanced::CommandFlag | Bool
+  {% else %}
+    def perform(transfer : Transfer, reuse_pool : ReusePool? = nil) : Enhanced::CommandFlag | Bool
+  {% end %}
+      session.syncCloseOutbound = false
+
+      {% if name == "inbound" %}
+        exceed_threshold_flag = Transfer::ExceedThresholdFlag::RECEIVE
+      {% else %}
+        exceed_threshold_flag = Transfer::ExceedThresholdFlag::SENT
+      {% end %}
+
+      set_transfer_options transfer: transfer, exceed_threshold_flag: exceed_threshold_flag
+      tuple = get_{{name.id}}_enhanced_websocket? session: session
+
+      tuple.try do |_tuple|
+        side_flag, enhanced_websocket = _tuple
+
+        {% if name == "inbound" %}
+          enhanced_websocket.resynchronize rescue nil
+        {% end %}
+
+        enhanced_websocket.transporting = true
+      end
+
+      transfer.perform
+
+      if tuple
+        {% if name == "inbound" %}
+          value = check_process_inbound_connection enhanced_websocket: tuple.last, side_flag: tuple.first, transfer: transfer, pause_pool: pause_pool
+          return value if value.is_a?(Enhanced::CommandFlag) || (true == value)
+        {% else %}
+          value = check_process_outbound_connection enhanced_websocket: tuple.last, transfer: transfer, reuse_pool: reuse_pool
+          return value if value.is_a?(Enhanced::CommandFlag) || (true == value)
+        {% end %}
+      end
+
+      loop do
+        case transfer
+        when .sent_done?
+          transfer.destination.close rescue nil unless transfer.destination.closed?
+        when .receive_done?
+          transfer.source.close rescue nil unless transfer.source.closed?
+        end
+
         break
       end
 
-      next sleep 0.25_f32.seconds
-    end
-  end
+      loop do
+        next sleep 0.25_f32.seconds unless transfer.finished?
 
-  def perform(outbound : IO, connection_pool : ConnectionPool)
-    transfer = Transfer.new source: session, destination: outbound, callback: callback, heartbeatCallback: heartbeat_proc
-    session.set_transfer_tls transfer: transfer, reset: true
-
-    perform transfer: transfer, connection_pool: connection_pool
-  end
-
-  def perform(transfer : Transfer, connection_pool : ConnectionPool)
-    @connectionReuse = nil
-    set_transfer_options transfer: transfer
-    transfer.perform
-
-    loop do
-      break if check_outbound_connection_reuse transfer: transfer, connection_pool: connection_pool
-
-      if transfer.done?
-        transfer.cleanup
-        session.reset reset_tls: true
-
-        @connectionReuse = false
         break
       end
 
-      next sleep 0.25_f32.seconds
+      session.syncCloseOutbound = true
+      session.cleanup
+
+      false
     end
-  end
+  {% end %}
 
-  private def set_transfer_options(transfer : Transfer)
-    # This function is used as an overridable.
-    # E.g. SessionID.
-
-    __set_transfer_options transfer: transfer
-  end
-
-  private def __set_transfer_options(transfer : Transfer)
-    transfer.heartbeatInterval = session.options.session.heartbeatInterval
-    transfer.aliveInterval = session.options.session.aliveInterval
-
-    return unless transfer.destination.is_a? Layer::Server::UDPOutbound
-    transfer.aliveInterval = session.options.session.udpAliveInterval
-  end
-
-  private def check_support_connection_reuse? : Bool
-    session.inbound.is_a?(Enhanced::WebSocket) || session.holding.is_a?(Enhanced::WebSocket)
-  end
-
-  private def check_inbound_connection_reuse(transfer : Transfer) : Bool
-    _session_inbound = session.inbound
-    return false unless _session_inbound.is_a? Enhanced::WebSocket
-
+  private def check_process_inbound_connection(enhanced_websocket : Enhanced::WebSocket, side_flag : SideFlag, transfer : Transfer, pause_pool : PausePool? = nil) : Enhanced::CommandFlag | Bool
     loop do
-      next sleep 0.25_f32.seconds unless transfer.done?
-      transfer.destination.close rescue nil unless transfer.destination.closed?
+      break if transfer.any_done?
+      next sleep 0.25_f32.seconds unless side_flag.holding?
 
-      _session_inbound.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
-      transfer.destination.close rescue nil unless transfer.destination.closed?
+      begin
+        enhanced_websocket.ping nil
+        enhanced_websocket.synchronize synchronize_flag: Enhanced::State::SynchronizeFlag::NEGOTIATE
+      rescue ex
+        break
+      end
+    end
 
-      break
+    decision_command_flag = decision_notify_command_flag? transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: side_flag, pause_pool: pause_pool, reuse_pool: nil
+
+    if decision_command_flag
+      enhanced_websocket.notify_peer_negotiate command_flag: decision_command_flag rescue nil
+
+      case decision_command_flag
+      in .connection_reuse?
+        transfer.destination.close rescue nil
+      in .connection_pause?
+        transfer.source.close rescue nil if transfer.sent_done? && !transfer.receive_done? && enhanced_websocket.received_command?.nil?
+      end
     end
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
 
-      begin
-        _session_inbound.response_pending_ping!
-        _session_inbound.receive_peer_command_notify_decision! expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
-      rescue ex
-        _session_inbound.confirmed_connection_reuse = false
+      break
+    end
+
+    enhanced_command_flag = process_enhanced_finished source: transfer.destination, transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: side_flag
+    connection_identifier = enhanced_websocket.connection_identifier
+
+    case enhanced_command_flag
+    in Enhanced::CommandFlag
+      case enhanced_command_flag
+      in .connection_reuse?
+        enhanced_websocket.reset_settings allow_connection_reuse: enhanced_websocket.allow_connection_reuse?, allow_connection_pause: enhanced_websocket.allow_connection_pause?, connection_identifier: enhanced_websocket.connection_identifier
+        transfer.reset_settings! reset_socket_switch_seconds: false, reset_socket_switch_bytes: false, reset_socket_switch_expression: false
+
+        case side_flag
+        in .holding?
+          session.inbound.try &.close rescue nil
+          session.inbound = enhanced_websocket
+        in .inbound?
+          session.holding.try &.close rescue nil
+        in .outbound?
+        end
+
+        session.holding = nil
+        session.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
+
+        Enhanced::CommandFlag::CONNECTION_REUSE
+      in .connection_pause?
+        enhanced_websocket.reset_settings allow_connection_reuse: enhanced_websocket.allow_connection_reuse?, allow_connection_pause: enhanced_websocket.allow_connection_pause?, connection_identifier: enhanced_websocket.connection_identifier
+        transfer.reset_settings! reset_socket_switch_seconds: false, reset_socket_switch_bytes: false, reset_socket_switch_expression: false
+
+        session.holding.try &.close rescue nil
+        session.holding = nil
+        session.cleanup sd_flag: Transfer::SDFlag::SOURCE, free_tls: true, reset: true
+        session.set_transfer_tls transfer: transfer, reset: true
+        transfer.reset_socket sd_flag: Transfer::SDFlag::SOURCE, reset_tls: true
+        connection_identifier.try { |_connection_identifier| pause_pool.try &.set connection_identifier: _connection_identifier, value: transfer, state: enhanced_websocket.state }
+
+        Enhanced::CommandFlag::CONNECTION_PAUSE
       end
+    in Nil
+      enhanced_websocket.reset_settings allow_connection_reuse: nil, allow_connection_pause: nil, connection_identifier: nil
+      transfer.reset_settings! reset_socket_switch_seconds: false, reset_socket_switch_bytes: false, reset_socket_switch_expression: false
+      connection_identifier.try { |_connection_identifier| pause_pool.try &.remove_connection_identifier connection_identifier: _connection_identifier }
 
-      unless _session_inbound.confirmed_connection_reuse?
-        transfer.cleanup
-        session.reset reset_tls: true
+      session.syncCloseOutbound = true
+      session.cleanup
 
-        @connectionReuse = false
-        _session_inbound.confirmed_connection_reuse = nil
-
-        return true
-      end
-
-      transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
-      session.reset_peer side: Transfer::Side::Destination, reset_tls: true
-
-      @connectionReuse = true
-      _session_inbound.confirmed_connection_reuse = nil
-      _session_inbound.pending_ping_command_bytes = nil
-
-      return true
+      true
     end
   end
 
-  private def check_holding_connection_reuse(transfer : Transfer) : Bool
-    _session_holding = session.holding
-    return false unless _session_holding.is_a? Enhanced::WebSocket
-
+  private def check_process_outbound_connection(enhanced_websocket : Enhanced::WebSocket, transfer : Transfer, reuse_pool : ReusePool? = nil) : Enhanced::CommandFlag | Bool
     loop do
-      unless transfer.done?
-        _session_holding.ping nil rescue nil
-        sleep 0.25_f32.seconds
-
-        next
-      end
-
-      _session_holding.notify_peer_termination! command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::DESTINATION rescue nil
-      transfer.destination.close rescue nil unless transfer.destination.closed?
+      next sleep 0.25_f32.seconds unless transfer.any_done?
 
       break
+    end
+
+    decision_command_flag = decision_notify_command_flag? transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: SideFlag::OUTBOUND, pause_pool: nil, reuse_pool: reuse_pool
+
+    if decision_command_flag
+      enhanced_websocket.notify_peer_negotiate command_flag: decision_command_flag rescue nil
+
+      case decision_command_flag
+      in .connection_reuse?
+        transfer.source.close rescue nil
+      in .connection_pause?
+      end
     end
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
 
-      begin
-        _session_holding.response_pending_ping!
-        _session_holding.receive_peer_command_notify_decision! expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
-      rescue ex
-        _session_holding.confirmed_connection_reuse = false
-      end
-
-      unless _session_holding.confirmed_connection_reuse?
-        transfer.cleanup
-        session.reset reset_tls: true
-
-        @connectionReuse = false
-        _session_holding.confirmed_connection_reuse = nil
-
-        return true
-      end
-
-      transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
-      session.reset_peer side: Transfer::Side::Destination, reset_tls: true
-
-      session.inbound.close rescue nil
-      session.inbound = _session_holding
-      session.holding = nil
-
-      @connectionReuse = true
-      _session_holding.confirmed_connection_reuse = nil
-      _session_holding.pending_ping_command_bytes = nil
-
-      return true
-    end
-  end
-
-  private def check_outbound_connection_reuse(transfer : Transfer, connection_pool : ConnectionPool) : Bool
-    transfer_destination = transfer.destination
-    return false unless transfer_destination.is_a? Client
-    enhanced_websocket = transfer_destination.outbound
-    return false unless enhanced_websocket.is_a? Enhanced::WebSocket
-
-    loop do
-      next sleep 0.25_f32.seconds unless transfer.sent_done?
-
-      transfer.source.close rescue nil unless transfer.source.closed?
-      enhanced_websocket.notify_peer_termination? command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE, closed_flag: SOCKS::Enhanced::ClosedFlag::SOURCE rescue nil
-
       break
     end
 
-    loop do
-      next sleep 0.25_f32.seconds unless transfer.finished?
+    enhanced_command_flag = process_enhanced_finished source: transfer.source, transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: SideFlag::OUTBOUND
+    connection_identifier = enhanced_websocket.connection_identifier
 
-      begin
-        enhanced_websocket.response_pending_ping!
-        enhanced_websocket.receive_peer_command_notify_decision! expect_command_flag: SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE
-      rescue ex
-        enhanced_websocket.confirmed_connection_reuse = false
+    case enhanced_command_flag
+    in Enhanced::CommandFlag
+      case enhanced_command_flag
+      in .connection_reuse?
+        enhanced_websocket.reset_settings allow_connection_reuse: enhanced_websocket.allow_connection_reuse?, allow_connection_pause: enhanced_websocket.allow_connection_pause?, connection_identifier: enhanced_websocket.connection_identifier
+        transfer.reset_settings! reset_socket_switch_seconds: false, reset_socket_switch_bytes: false, reset_socket_switch_expression: false
+
+        session.holding.try &.close rescue nil
+        session.holding = nil
+        session.cleanup sd_flag: Transfer::SDFlag::SOURCE, free_tls: true, reset: true
+        session.set_transfer_tls transfer: transfer, reset: true
+        transfer.reset_socket sd_flag: Transfer::SDFlag::SOURCE, reset_tls: true
+        reuse_pool.try { |_reuse_pool| _reuse_pool.unshift value: transfer }
+
+        Enhanced::CommandFlag::CONNECTION_REUSE
+      in .connection_pause?
+        enhanced_websocket.reset_settings allow_connection_reuse: enhanced_websocket.allow_connection_reuse?, allow_connection_pause: enhanced_websocket.allow_connection_pause?, connection_identifier: enhanced_websocket.connection_identifier
+        transfer.reset_settings! reset_socket_switch_seconds: false, reset_socket_switch_bytes: false, reset_socket_switch_expression: false
+
+        session.holding.try &.close rescue nil
+        session.holding = nil
+        session.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
+
+        Enhanced::CommandFlag::CONNECTION_PAUSE
       end
+    in Nil
+      enhanced_websocket.reset_settings allow_connection_reuse: nil, allow_connection_pause: nil, connection_identifier: nil
+      transfer.reset_settings! reset_socket_switch_seconds: false, reset_socket_switch_bytes: false, reset_socket_switch_expression: false
 
-      unless enhanced_websocket.confirmed_connection_reuse?
-        transfer.cleanup
-        session.reset reset_tls: true
+      session.syncCloseOutbound = true
+      session.cleanup
 
-        @connectionReuse = false
-        enhanced_websocket.confirmed_connection_reuse = nil
-
-        return true
-      end
-
-      transfer.cleanup side: Transfer::Side::Source, free_tls: true, reset: true
-      session.reset_peer side: Transfer::Side::Source, reset_tls: true
-      transfer.reset!
-
-      session.holding.try &.close rescue nil
-      session.holding = nil
-      transfer_destination.holding.try &.close rescue nil
-      transfer_destination.holding = nil
-
-      @connectionReuse = true
-      enhanced_websocket.confirmed_connection_reuse = nil
-      enhanced_websocket.pending_ping_command_bytes = nil
-      connection_pool.unshift value: transfer
-
-      return true
+      true
     end
+  end
+
+  private def decision_notify_command_flag?(transfer : Transfer, enhanced_websocket : Enhanced::WebSocket, side_flag : SideFlag, pause_pool : PausePool?, reuse_pool : ReusePool?) : Enhanced::CommandFlag?
+    return if (!enhanced_websocket.allow_connection_reuse? && !enhanced_websocket.allow_connection_pause?) || !enhanced_websocket.connection_identifier
+
+    _command_flag = enhanced_websocket.received_command_flag?
+    sent_exception = transfer.sent_exception?
+    receive_exception = transfer.receive_exception?
+
+    unless _command_flag
+      case side_flag
+      in .inbound?
+        _command_flag = enhanced_websocket.allow_connection_pause? ? Enhanced::CommandFlag::CONNECTION_PAUSE : Enhanced::CommandFlag::CONNECTION_REUSE
+      in .holding?
+        _command_flag = Enhanced::CommandFlag::CONNECTION_REUSE
+      in .outbound?
+        _command_flag = enhanced_websocket.allow_connection_pause? ? Enhanced::CommandFlag::CONNECTION_PAUSE : Enhanced::CommandFlag::CONNECTION_REUSE unless _command_flag
+      end
+    end
+
+    _command_flag = Enhanced::CommandFlag::CONNECTION_PAUSE unless _command_flag
+    _command_flag = Enhanced::CommandFlag::CONNECTION_REUSE if transfer.sentBytes.get.zero? && transfer.receivedBytes.get.zero?
+
+    case _command_flag
+    in .connection_reuse?
+      return unless enhanced_websocket.allow_connection_reuse?
+      return unless reuse_pool if side_flag.outbound?
+    in .connection_pause?
+      return unless enhanced_websocket.allow_connection_pause?
+      return if side_flag.holding?
+      return unless pause_pool if side_flag.inbound?
+    end
+
+    _command_flag
+  end
+
+  private def process_enhanced_finished(source : IO, transfer : Transfer, enhanced_websocket : Enhanced::WebSocket, side_flag : SideFlag) : Enhanced::CommandFlag?
+    _exception = enhanced_websocket.process_negotiate source: source rescue nil
+
+    _command_flag = enhanced_websocket.final_command_flag?
+    _command_flag = Enhanced::CommandFlag::CONNECTION_PAUSE if enhanced_websocket.allow_connection_pause? unless _command_flag
+    _command_flag = Enhanced::CommandFlag::CONNECTION_REUSE if enhanced_websocket.allow_connection_reuse? unless _command_flag
+    return unless _command_flag
+
+    return if _command_flag.connection_reuse? && _exception
+    return if _command_flag.connection_reuse? && !enhanced_websocket.allow_connection_reuse?
+    return if _command_flag.connection_pause? && !enhanced_websocket.allow_connection_pause?
+
+    if side_flag.holding? && _command_flag.connection_pause?
+      _command_flag = enhanced_websocket.allow_connection_reuse? ? Enhanced::CommandFlag::CONNECTION_REUSE : nil
+    end
+
+    if transfer.sentBytes.get.zero? && transfer.receivedBytes.get.zero? && _command_flag.try &.connection_pause?
+      _command_flag = enhanced_websocket.allow_connection_reuse? ? Enhanced::CommandFlag::CONNECTION_REUSE : nil
+    end
+
+    _command_flag
   end
 
   private def heartbeat_proc : Proc(Transfer, Time::Span, Bool)?
@@ -283,6 +419,7 @@ class SOCKS::SessionProcessor
           enhanced_websocket.ping nil
         rescue ex
           unless _heartbeat_callback
+            transfer.reset_monitor_state
             sleep heartbeat_interval
 
             return false
@@ -291,6 +428,7 @@ class SOCKS::SessionProcessor
       end
 
       unless _heartbeat_callback
+        transfer.reset_monitor_state
         sleep heartbeat_interval
 
         return true

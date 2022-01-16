@@ -1,4 +1,4 @@
-class SOCKS::ConnectionPool
+class SOCKS::ReusePool
   getter clearInterval : Time::Span
   getter capacity : Int32
   getter entries : Set(Entry)
@@ -15,9 +15,21 @@ class SOCKS::ConnectionPool
     @mutex.synchronize do
       entries.each do |entry|
         entries.delete entry
-        entry.transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
+
+        transfer_destination_reset_socket entry: entry
+        entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
       end
     end
+  end
+
+  private def transfer_destination_reset_socket(entry : Entry) : Bool
+    transfer_destination = entry.transfer.destination
+    return false unless transfer_destination.is_a? Client
+
+    transfer_destination.close rescue nil
+    transfer_destination.reset_socket
+
+    true
   end
 
   private def need_cleared?
@@ -32,18 +44,20 @@ class SOCKS::ConnectionPool
   private def inactive_entry_cleanup
     while capacity <= entries.size
       entry = entries.first
-
       entries.delete entry
-      entry.transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
+
+      transfer_destination_reset_socket entry: entry
+      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
     end
 
     return unless need_cleared?
 
     entries.each do |entry|
       next unless clearInterval <= (Time.local - entry.created_at)
-
       entries.delete entry
-      entry.transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
+
+      transfer_destination_reset_socket entry: entry
+      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
     end
 
     refresh_last_cleaned_up
@@ -73,7 +87,8 @@ class SOCKS::ConnectionPool
         entries.delete entries_first
 
         if clearInterval <= (Time.local - entries_first.created_at)
-          entries_first.transfer.cleanup side: Transfer::Side::Destination, free_tls: true, reset: true
+          transfer_destination_reset_socket entry: entry
+          entries_first.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
 
           next
         end

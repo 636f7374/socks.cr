@@ -1,24 +1,10 @@
 module SOCKS::Enhanced
   class WebSocket < IO
-    alias Opcode = HTTP::WebSocket::Protocol::Opcode
-    alias Protocol = HTTP::WebSocket::Protocol
-
-    getter io : Protocol
+    getter io : HTTP::WebSocket::Protocol
     getter options : Options?
-    getter windowRemaining : Atomic(Int32)
-    getter buffer : IO::Memory
-    getter ioMutex : Mutex
-    getter mutex : Mutex
+    property state : State::WebSocket
 
-    def initialize(@io : Protocol, @options : Options? = nil)
-      @windowRemaining = Atomic(Int32).new 0_i32
-      @buffer = IO::Memory.new
-      @ioMutex = Mutex.new :unchecked
-      @mutex = Mutex.new :unchecked
-    end
-
-    def io : Protocol
-      @io
+    def initialize(@io : HTTP::WebSocket::Protocol, @options : Options? = nil, @state : State::WebSocket = State::WebSocket.new)
     end
 
     def read_timeout=(value : Int | Time::Span | Nil)
@@ -51,191 +37,115 @@ module SOCKS::Enhanced
       _io.responds_to?(:remote_address) ? _io.remote_address : nil
     end
 
-    def confirmed_connection_reuse=(value : Bool?)
-      @mutex.synchronize { @confirmedConnectionReuse = value }
+    protected def maximum_sent_sequence=(value : Int8) : Int8
+      state.maximum_sent_sequence = value
     end
 
-    def confirmed_connection_reuse?
-      @mutex.synchronize { @confirmedConnectionReuse.dup }
+    protected def maximum_receive_sequence=(value : Int8) : Int8
+      state.maximum_receive_sequence = value
     end
 
-    def pending_ping_command_bytes=(value : Bytes?)
-      @mutex.synchronize { @pendingPingCommandBytes = value }
+    protected def allow_connection_reuse=(value : Bool?)
+      state.allow_connection_reuse = value
     end
 
-    def pending_ping_command_bytes
-      @mutex.synchronize { @pendingPingCommandBytes.dup }
+    def allow_connection_reuse? : Bool
+      state.allow_connection_reuse?
     end
 
-    private def update_buffer
-      receive_buffer = uninitialized UInt8[4096_i32]
-
-      loop do
-        receive = io.receive receive_buffer.to_slice
-
-        case receive.opcode
-        when .binary?
-          self.windowRemaining.set receive.size
-
-          @mutex.synchronize do
-            buffer.rewind
-            buffer.clear
-
-            buffer.write receive_buffer.to_slice[0_i32, receive.size]
-            buffer.rewind
-          end
-
-          break
-        when .ping?
-          slice = receive_buffer.to_slice[0_i32, receive.size].dup
-
-          parse_ping_command?(slice: slice).try do |tuple|
-            self.pending_ping_command_bytes = slice
-
-            case tuple.first
-            in .connection_reuse?
-              raise Exception.new "Enhanced::WebSocket.update_buffer: Received Ping CommandFlag::CONNECTION_REUSE from io."
-            end
-          end
-        when .pong?
-          slice = receive_buffer.to_slice[0_i32, receive.size].dup
-
-          parse_pong_command?(slice: slice).try do |tuple|
-            case tuple.first
-            in .connection_reuse?
-              case tuple.last
-              in .confirmed?
-                self.confirmed_connection_reuse = true
-                raise Exception.new "Enhanced::WebSocket.update_buffer: Received Pong CommandFlag::CONNECTION_REUSE (DecisionFlag::CONFIRMED) from io."
-              in .refused?
-                self.confirmed_connection_reuse = false
-                raise Exception.new "Enhanced::WebSocket.update_buffer: Received Pong CommandFlag::CONNECTION_REUSE (DecisionFlag::REFUSED) from io."
-              end
-            end
-          end
-        end
-      end
+    protected def allow_connection_pause=(value : Bool?)
+      state.allow_connection_pause = value
     end
 
-    private def parse_ping_command?(slice : Bytes) : Tuple(CommandFlag, ClosedFlag)?
-      return if slice.size < 2_i32
-
-      command_flag = CommandFlag.from_value slice[0_i32] rescue nil
-      return unless _command_flag = command_flag
-
-      case _command_flag
-      in .connection_reuse?
-        closed_flag = ClosedFlag.from_value slice[1_i32] rescue nil
-        return unless _closed_flag = closed_flag
-
-        return Tuple.new command_flag, _closed_flag
-      end
+    def allow_connection_pause? : Bool
+      state.allow_connection_pause?
     end
 
-    private def parse_pong_command?(slice : Bytes) : Tuple(CommandFlag, DecisionFlag)?
-      return if slice.size < 2_i32
-
-      command_flag = CommandFlag.from_value slice[0_i32] rescue nil
-      return unless _command_flag = command_flag
-
-      case _command_flag
-      in .connection_reuse?
-        decision_flag = DecisionFlag.from_value slice[1_i32] rescue nil
-        return unless _decision_flag = decision_flag
-
-        return Tuple.new command_flag, _decision_flag
-      end
+    protected def connection_identifier=(value : UUID?)
+      state.connection_identifier = value
     end
 
-    def notify_peer_termination?(command_flag : CommandFlag, closed_flag : ClosedFlag)
-      notify_peer_termination! command_flag: command_flag, closed_flag: closed_flag
+    def connection_identifier
+      state.connection_identifier
     end
 
-    def notify_peer_termination!(command_flag : CommandFlag, closed_flag : ClosedFlag)
-      ping Bytes[command_flag.value, closed_flag.value]
+    {% for name in ["synchronizing", "transporting"] %}
+    def {{name.id}}=(value : Bool)
+      state.{{name.id}} = value
     end
 
-    def response_pending_ping!
-      return unless _pending_ping_command_bytes = pending_ping_command_bytes
-      slice = _pending_ping_command_bytes
+    def {{name.id}}? : Bool
+      state.{{name.id}}
+    end
+    {% end %}
 
-      parse_ping_command?(slice: slice).try do |tuple|
-        case tuple.first
-        in .connection_reuse?
-          response_peer_termination! command_flag: tuple.first, decision_flag: nil
-        end
-      end
+    {% for name in ["send", "received"] %}
+    def {{name.id}}_command? : Tuple(Int64, CommandFlag)?
+      state.{{name.id}}_command?
     end
 
-    private def response_peer_termination!(command_flag : CommandFlag, decision_flag : DecisionFlag?)
-      unless decision_flag
-        decision_flag = options.try &.switcher.try &.allowConnectionReuse ? DecisionFlag::CONFIRMED : DecisionFlag::REFUSED
-        decision_flag = DecisionFlag::REFUSED if false == confirmed_connection_reuse?
-      end
+    def {{name.id}}_command_flag? : CommandFlag?
+      state.{{name.id}}_command_flag?
+    end
+    {% end %}
 
-      pong Bytes[command_flag.value, decision_flag.value]
+    def reset_settings(allow_connection_reuse : Bool? = nil, allow_connection_pause : Bool? = nil, connection_identifier : UUID? = nil) : Bool
+      self.connection_identifier = connection_identifier
+      state.reset_settings allow_connection_reuse: allow_connection_reuse, allow_connection_pause: allow_connection_pause
+
+      true
     end
 
-    def receive_peer_command_notify_decision!(expect_command_flag : CommandFlag) : DecisionFlag
-      receive_buffer = uninitialized UInt8[4096_i32]
+    def process_response_pending_command_negotiate
+      state.process_response_pending_command_negotiate io: io
+    end
 
-      finished_passive = false
-      finished_passive = true if pending_ping_command_bytes
-      finished_active = false
-      finished_active = true if confirmed_connection_reuse?.is_a? Bool
+    def process_client_side_connection_pause_pending! : State::QueueFlag
+      state.process_client_side_connection_pause_pending! io: io
+    end
 
-      loop do
-        break (confirmed_connection_reuse? ? DecisionFlag::CONFIRMED : DecisionFlag::REFUSED) if finished_passive && finished_active
-        receive = io.receive receive_buffer.to_slice
+    def process_server_side_connection_pause_pending!(connection_identifier : UUID, pause_pool : PausePool) : PausePool::Entry?
+      state.process_server_side_connection_pause_pending! io: io, connection_identifier: connection_identifier, pause_pool: pause_pool
+    end
 
-        case receive.opcode
-        when .ping?
-          slice = receive_buffer.to_slice[0_i32, receive.size].dup
+    def notify_peer_negotiate(command_flag : CommandFlag)
+      state.notify_peer_negotiate io: io, command_flag: command_flag
+    end
 
-          parse_ping_command?(slice: slice).try do |tuple|
-            finished_passive = true
-            response_peer_termination! command_flag: tuple.first, decision_flag: nil
-          end
-        when .pong?
-          slice = receive_buffer.to_slice[0_i32, receive.size].dup
+    def notify_peer_incoming
+      state.notify_peer_incoming io: io
+    end
 
-          parse_pong_command?(slice: slice).try do |tuple|
-            next unless tuple.first == expect_command_flag
+    def process_negotiate(source : IO)
+      state.process_negotiate io: io, source: source
+    end
 
-            case tuple.first
-            in .connection_reuse?
-              finished_active = true
-              self.confirmed_connection_reuse = tuple.last.confirmed? ? true : false
-            end
-          end
-        end
-      end
+    def resynchronize
+      state.resynchronize io: io
+    end
+
+    def synchronize(synchronize_flag : State::SynchronizeFlag)
+      state.synchronize io: io, synchronize_flag: synchronize_flag
     end
 
     def ping(slice : Bytes?)
-      @ioMutex.synchronize { io.ping slice }
+      state.ping io: io, slice: slice
     end
 
     def pong(slice : Bytes?)
-      @ioMutex.synchronize { io.pong slice }
+      state.pong io: io, slice: slice
     end
 
     def read(slice : Bytes) : Int32
-      return 0_i32 if slice.empty?
-      update_buffer if windowRemaining.get.zero?
-
-      length = @mutex.synchronize { buffer.read slice }
-      self.windowRemaining.add -length
-
-      length
+      state.read io: io, slice: slice
     end
 
     def write(slice : Bytes) : Nil
-      @ioMutex.synchronize { io.send slice }
+      state.write io: io, slice: slice
     end
 
     def flush
-      @ioMutex.synchronize { io.flush }
+      io.flush
     end
 
     def close
@@ -245,7 +155,23 @@ module SOCKS::Enhanced
     def closed?
       io.closed?
     end
+
+    def update_receive_rescue_buffer(slice : Bytes) : Bool
+      state.update_receive_rescue_buffer slice: slice
+    end
+
+    {% for name in ["send", "received"] %}
+    def {{name.id}}_command? : Tuple(Int64, CommandFlag)?
+      state.{{name.id}}_command?
+    end
+
+    def {{name.id}}_command_flag? : CommandFlag?
+      state.{{name.id}}_command_flag?
+    end
+    {% end %}
+
+    def final_command_flag? : CommandFlag?
+      state.final_command_flag?
+    end
   end
 end
-
-require "http/web_socket"

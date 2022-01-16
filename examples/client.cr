@@ -4,16 +4,17 @@ require "../src/socks.cr"
 # DNS.cr will send and receive DNS requests in concurrent.
 
 dns_servers = Set(DNS::Address).new
-dns_servers << DNS::Address.new ipAddress: Socket::IPAddress.new("8.8.8.8", 53_i32), protocolType: DNS::ProtocolType::UDP
-dns_servers << DNS::Address.new ipAddress: Socket::IPAddress.new("8.8.4.4", 853_i32), protocolType: DNS::ProtocolType::TLS
+dns_servers << DNS::Address::UDP.new ipAddress: Socket::IPAddress.new("8.8.8.8", 53_i32), timeout: DNS::TimeOut.new
+dns_servers << DNS::Address::UDP.new ipAddress: Socket::IPAddress.new("8.8.4.4", 53_i32), timeout: DNS::TimeOut.new
+dns_servers << DNS::Address::TLS.new ipAddress: Socket::IPAddress.new("8.8.4.4", 853_i32), timeout: DNS::TimeOut.new, tls: nil
 dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 
 # Create SOCKS::Options.
 
 options = SOCKS::Options.new
-options.client.wrapper = SOCKS::Options::Client::Wrapper::WebSocket.new address: SOCKS::Address.new(host: "0.0.0.0", port: 1234_i32), resource: "/", headers: HTTP::Headers.new, dataRaw: nil
-options.switcher.allowConnectionReuse = true
+options.client.wrapper = SOCKS::Options::Client::Wrapper::WebSocket.new address: SOCKS::Address.new(host: "0.0.0.0", port: 1234_i32), resource: "/", headers: HTTP::Headers.new, dataRaw: nil, maximumSentSequence: Int8::MAX, maximumReceiveSequence: Int8::MAX
 options.switcher.enableConnectionIdentifier = true
+options.switcher.allowConnectionReuse = true
 options.switcher.allowTCPBinding = true
 options.switcher.allowAssociateUDP = true
 
@@ -64,7 +65,7 @@ begin
   STDOUT.puts [:tcpConnection, Time.local, http_response]
 
   # Use WebSocket Enhanced KeepAlive to tell the peer to terminate the destination connection.
-  STDOUT.puts [:connectionReuse, Time.local, client.notify_peer_termination!]
+  STDOUT.puts [:connectionReuse, Time.local, client.notify_peer_negotiate(source: STDOUT)]
 
   # Establish a TCPBinding to example.com through outbound.
   client.establish! command_type: SOCKS::Frames::CommandFlag::TCPBinding, host: "example.com", port: 80_i32, remote_dns_resolution: true
@@ -79,12 +80,12 @@ begin
   STDOUT.puts [:tcpBinding, Time.local, http_response]
 
   # Use WebSocket Enhanced KeepAlive to tell the peer to terminate the destination connection.
-  STDOUT.puts [:connectionReuse, Time.local, client.notify_peer_termination!]
+  STDOUT.puts [:connectionReuse, Time.local, client.notify_peer_negotiate(source: STDOUT)]
 
   # Establish a AssociateUDP to example.com through outbound.
   client.establish! command_type: SOCKS::Frames::CommandFlag::AssociateUDP, host: "8.8.8.8", port: 53_i32, remote_dns_resolution: true
 
-  # Send Durian::Packet Query (AssociateUDP).
+  # Send DNS Packet Query (AssociateUDP).
   dns_ask = DNS::Packet.create_getaddrinfo_ask protocol_type: DNS::ProtocolType::UDP, name: "www.example.com", record_type: DNS::Packet::RecordFlag::A
   dns_ask.transmissionId = Random.new.rand UInt16
   client.write dns_ask.to_slice
@@ -96,10 +97,10 @@ begin
   read_length = client.read buffer.to_slice
   memory = IO::Memory.new buffer.to_slice[0_i32, read_length]
 
-  # Parsing Durian::Packet Response (AssociateUDP).
+  # Parsing DNS Packet Response (AssociateUDP).
   STDOUT.puts [:associateUDPFirst, Time.local, (DNS::Packet.from_io protocol_type: DNS::ProtocolType::UDP, io: memory)]
 
-  # Send Durian::Packet Query (AssociateUDP).
+  # Send DNS Packet Query (AssociateUDP).
   dns_ask = DNS::Packet.create_getaddrinfo_ask protocol_type: DNS::ProtocolType::UDP, name: "www.google.com", record_type: DNS::Packet::RecordFlag::A
   dns_ask.transmissionId = Random.new.rand UInt16
   client.write dns_ask.to_slice
@@ -108,10 +109,10 @@ begin
   read_length = client.read buffer.to_slice
   memory = IO::Memory.new buffer.to_slice[0_i32, read_length]
 
-  # Parsing Durian::Packet Response (AssociateUDP).
+  # Parsing DNS Packet Response (AssociateUDP).
   STDOUT.puts [:associateUDPLast, Time.local, (DNS::Packet.from_io protocol_type: DNS::ProtocolType::UDP, io: memory)]
 rescue ex
-  STDOUT.puts [ex]
+  STDOUT.puts [ex, ex.backtrace?]
 end
 
 # Never forget to close IO, otherwise it will cause socket leakage.

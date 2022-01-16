@@ -4,8 +4,27 @@ module SOCKS
     Reply = 1_u8
   end
 
+  enum ConnectionIdentifierDecisionFlag : UInt8
+    VALID_FORMAT   = 0_u8
+    INVALID_FORMAT = 1_i8
+    UNSUPPORTED    = 2_u8
+  end
+
+  enum ConnectionReuseDecisionFlag : UInt8
+    SUPPORTED   = 0_u8
+    UNSUPPORTED = 1_u8
+  end
+
+  enum ConnectionPauseDecisionFlag : UInt8
+    VALID       = 0_u8
+    PENDING     = 1_u8
+    INVALID     = 2_u8
+    SUPPORTED   = 3_u8
+    UNSUPPORTED = 4_u8
+  end
+
   def self.to_ip_address(host : String, port : Int32)
-    Socket::IPAddress.new host, port rescue nil
+    Socket::IPAddress.new address: host, port: port rescue nil
   end
 
   def self.create_outbound_socket(command_type : Frames::CommandFlag, destination_address : Socket::IPAddress | Address, dns_resolver : DNS::Resolver, tcp_timeout : TimeOut = TimeOut.new, udp_timeout : TimeOut = TimeOut.udp_default) : ::IPSocket

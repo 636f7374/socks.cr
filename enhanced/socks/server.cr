@@ -21,11 +21,9 @@ class SOCKS::Server
 
         any = destination_blocker.ipBlocks.any? do |destination_blocker_ip_block|
           case destination_blocker_ip_block
-          in IPAddress::IPv4
+          in IPAddress
             destination_blocker_ip_block.includes? _destination_address
-          in IPAddress::IPv6
-            destination_blocker_ip_block.includes? _destination_address
-          in Tuple(IPAddress::IPv4 | IPAddress::IPv6, Int32)
+          in Tuple(IPAddress, Int32)
             _destination_blocker_ip_block, port = destination_blocker_ip_block
             _destination_blocker_ip_block.includes?(_destination_address) && (destination_address.port == port)
           end
