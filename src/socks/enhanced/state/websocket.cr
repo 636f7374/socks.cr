@@ -96,7 +96,7 @@ module SOCKS::Enhanced
       end
 
       def receive_buffer_end_of_reached? : Bool
-        @mutex.synchronize { (receiveBuffer.pos == receiveBuffer.size) || receiveBuffer.size.zero? }
+        @receiveMutex.synchronize { (receiveBuffer.pos == receiveBuffer.size) || receiveBuffer.size.zero? }
       end
 
       def receive_end_of_reached? : Bool
@@ -486,7 +486,7 @@ module SOCKS::Enhanced
         loop do
           case synchronize_flag
           in .readable?
-            return RBFlag::READY unless @mutex.synchronize { receiveBuffer.pos == receiveBuffer.size }
+            return RBFlag::READY unless @receiveMutex.synchronize { receiveBuffer.pos == receiveBuffer.size }
           in .writeable?
             return RBFlag::READY unless transporting?
             return RBFlag::READY unless sentSequence.get == maximum_sent_sequence
@@ -528,13 +528,14 @@ module SOCKS::Enhanced
               raise Exception.new "Enhanced::State::WebSocket.synchronize: peerSentSequence does not match receiveSequence!"
             end
 
-            @mutex.synchronize do
+            @receiveMutex.synchronize do
               if receiveBuffer.pos == receiveBuffer.size
                 receiveBuffer.rewind
                 receiveBuffer.clear
               end
 
               receive_buffer_pos = receiveBuffer.pos.dup
+              receiveBuffer.pos = receiveBuffer.size
               IO.copy memory_slice, receiveBuffer
               receiveBuffer.pos = receive_buffer_pos
             end
