@@ -53,13 +53,11 @@ class SOCKS::SessionProcessor
         transfer_destination_options.client.pausePool.try &.socketSwitchExpression.try { |socket_switch_expression| transfer.socketSwitchExpression.set socket_switch_expression }
       end
 
-      if transfer_destination.connection_identifier && transfer_destination_options
-        transfer.heartbeatInterval = transfer_destination_options.session.heartbeatInterval
-        transfer.aliveInterval = transfer_destination_options.session.aliveInterval
-      end
+      transfer.heartbeatInterval = transfer_destination_options.session.heartbeatInterval
+      transfer.aliveInterval = transfer_destination_options.session.aliveInterval
     end
 
-    if transfer.destination.is_a? Layer::Server::UDPOutbound
+    if transfer_destination.is_a? Layer::Server::UDPOutbound
       transfer.aliveInterval = session.options.session.udpAliveInterval
     end
   end
