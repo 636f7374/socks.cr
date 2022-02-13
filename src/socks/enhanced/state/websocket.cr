@@ -500,7 +500,7 @@ module SOCKS::Enhanced
           end
 
           self.synchronizing = true
-          receive_buffer = uninitialized UInt8[8192_i32]
+          receive_buffer = uninitialized UInt8[4102_i32]
 
           loop do
             receive = @receiveMutex.synchronize { io.receive receive_buffer.to_slice }
