@@ -72,11 +72,11 @@ class Transfer
   end
 
   def first_alive_time : Time
-    Time.unix(seconds: @firstAliveTime.get) rescue Time.local
+    Time.unix_ms(milliseconds: @firstAliveTime.get) rescue Time.utc
   end
 
   def last_alive_time : Time
-    Time.unix(seconds: @lastAliveTime.get) rescue Time.local
+    Time.unix_ms(milliseconds: @lastAliveTime.get) rescue Time.utc
   end
 
   def source_tls_sockets=(value : Set(OpenSSL::SSL::Socket::Server))
@@ -397,16 +397,17 @@ class Transfer
   {% end %}
 
   def perform
-    @firstAliveTime.set Time.local.to_unix
-    @lastAliveTime.set Time.local.to_unix
+    @firstAliveTime.set Time.local.to_unix_ms
+    @lastAliveTime.set Time.local.to_unix_ms
 
     sent_fiber = spawn do
+      finished_set = Set(Time).new
       exception = nil
 
       loop do
         begin
           IO.yield_copy src: source, dst: destination do |count, length|
-            @lastAliveTime.set Time.local.to_unix
+            @lastAliveTime.set Time.local.to_unix_ms
 
             sentBytes.add(length.to_u64) rescue sentBytes.set(0_u64)
             update_monitor_sent_bytes value: length
@@ -418,11 +419,16 @@ class Transfer
           exception = ex.cause
         end
 
+        unless exception
+          finished_set.first?.try { |first| finished_set.clear if (Time.local - first) > 5_i32.seconds }
+          finished_set << Time.local
+          break if finished_set.size > 10_i32
+        end
+
         break unless exception.class == IO::TimeoutError if exception
         break if receive_done? && !exception
         break if strict_check_sent_exceed_threshold?
-        break if aliveInterval <= (Time.local - last_alive_time)
-        break if exception.is_a?(IO::TimeoutError) && exception.try &.message.try &.starts_with?("Write")
+        break if aliveInterval <= (Time.utc - last_alive_time)
         next sleep 0.05_f32.seconds if exception.is_a? IO::TimeoutError
         next sleep 0.05_f32.seconds unless receive_done?
 
@@ -434,13 +440,13 @@ class Transfer
     end
 
     receive_fiber = spawn do
+      finished_set = Set(Time).new
       exception = nil
-      last_exception_time = nil
 
       loop do
         begin
           IO.yield_copy src: destination, dst: source do |count, length|
-            @lastAliveTime.set Time.local.to_unix
+            @lastAliveTime.set Time.local.to_unix_ms
 
             receivedBytes.add(length.to_u64) rescue receivedBytes.set(0_u64)
             update_monitor_receive_bytes value: length
@@ -452,10 +458,16 @@ class Transfer
           exception = ex.cause
         end
 
+        unless exception
+          finished_set.first?.try { |first| finished_set.clear if (Time.local - first) > 5_i32.seconds }
+          finished_set << Time.local
+          break if finished_set.size > 10_i32
+        end
+
         break unless exception.class == IO::TimeoutError if exception
         break if sent_done? && !exception
         break if strict_check_receive_exceed_threshold?
-        break if aliveInterval <= (Time.local - last_alive_time)
+        break if aliveInterval <= (Time.utc - last_alive_time)
 
         if exception.is_a?(IO::TimeoutError) && exception.try &.message.try &.starts_with?("Write")
           _destination = destination

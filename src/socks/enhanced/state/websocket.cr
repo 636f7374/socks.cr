@@ -25,6 +25,7 @@ module SOCKS::Enhanced
       getter anyDone : Atomic(Int8)
       getter sentMutex : Mutex
       getter receiveMutex : Mutex
+      getter synchronizeMutex : Mutex
       getter mutex : Mutex
 
       def initialize
@@ -52,6 +53,7 @@ module SOCKS::Enhanced
         @anyDone = Atomic(Int8).new -1_i8
         @sentMutex = Mutex.new :unchecked
         @receiveMutex = Mutex.new :unchecked
+        @synchronizeMutex = Mutex.new :unchecked
         @mutex = Mutex.new :unchecked
       end
 
@@ -463,176 +465,186 @@ module SOCKS::Enhanced
         ping io: io, slice: resynchronize_frame
 
         synchronize io: io, synchronize_flag: SynchronizeFlag::RESYNCHRONIZE, ignore_incoming_alert: true
-        process_receive_end_of_reached io: io if receive_end_of_reached?
       end
 
       def synchronize(io : HTTP::WebSocket::Protocol, synchronize_flag : SynchronizeFlag, ignore_incoming_alert : Bool = true) : RBFlag
-        loop do
-          begin
-            break __synchronize io: io, synchronize_flag: synchronize_flag
-          rescue ex : IncomingAlert
-            self.synchronizing = false
+        begin
+          loop do
+            ready = synchronize_ready? synchronize_flag: synchronize_flag
+            return ready if ready
+            break unless synchronizing?
 
-            raise ex unless ignore_incoming_alert
-          rescue ex
-            self.synchronizing = false
-
-            raise ex
+            return RBFlag::BUSY
           end
+
+          __synchronize io: io, synchronize_flag: synchronize_flag
+        rescue ex : IncomingAlert
+          self.synchronizing = false
+
+          raise ex unless ignore_incoming_alert
+          RBFlag::NONE
+        rescue ex
+          self.synchronizing = false
+
+          raise ex
         end
       end
 
       protected def __synchronize(io : HTTP::WebSocket::Protocol, synchronize_flag : SynchronizeFlag) : RBFlag
-        loop do
-          case synchronize_flag
-          in .readable?
-            return RBFlag::READY unless @receiveMutex.synchronize { receiveBuffer.pos == receiveBuffer.size }
-          in .writeable?
-            return RBFlag::READY unless transporting?
-            return RBFlag::READY unless sentSequence.get == maximum_sent_sequence
-          in .resynchronize?
-          in .negotiate?
+        @synchronizeMutex.synchronize do
+          ready = synchronize_ready? synchronize_flag: synchronize_flag
+
+          if ready
+            self.synchronizing = false
+            return ready
           end
 
-          unless synchronizing?
-            self.synchronizing = true
+          self.synchronizing = true
+          receive_buffer = uninitialized UInt8[8192_i32]
+
+          loop do
+            receive = @receiveMutex.synchronize { io.receive receive_buffer.to_slice }
+
+            if synchronize_flag.resynchronize? && receive.opcode.binary?
+              raise Exception.new "Enhanced::State::WebSocket.synchronize: synchronizeFlag is RESYNCHRONIZE, Binary Opcode is received! (Unexpected)."
+            end
+
+            case receive.opcode
+            when .binary?
+              break if synchronize_flag.negotiate?
+              memory_slice = IO::Memory.new receive_buffer.to_slice[0_i32, receive.size]
+              break unless state_flag = parse_state_flag? memory_slice: memory_slice
+              break unless state_flag.sent?
+
+              receiveSequence.add 1_i8 if transporting?
+              peer_sent_sequence, size = parse_sent_frame memory_slice: memory_slice
+              receive_sequence = receiveSequence.get
+
+              if transporting? && (peer_sent_sequence != receive_sequence)
+                receiveSequence.add -1_i8 if transporting?
+                raise Exception.new "Enhanced::State::WebSocket.synchronize: peerSentSequence does not match receiveSequence!"
+              end
+
+              @receiveMutex.synchronize do
+                if receiveBuffer.pos == receiveBuffer.size
+                  receiveBuffer.rewind
+                  receiveBuffer.clear
+                end
+
+                receive_buffer_pos = receiveBuffer.pos.dup
+                receiveBuffer.pos = receiveBuffer.size
+                IO.copy memory_slice, receiveBuffer
+                receiveBuffer.pos = receive_buffer_pos
+              end
+
+              process_receive_end_of_reached io: io if receive_end_of_reached?
+            when .ping?
+              memory_slice = IO::Memory.new receive_buffer.to_slice[0_i32, receive.size]
+              state_flag = parse_state_flag? memory_slice: memory_slice
+
+              break pong io: io, slice: nil if state_flag.nil?
+
+              if synchronize_flag.resynchronize? && !state_flag.resynchronize?
+                raise Exception.new "Enhanced::State::WebSocket.synchronize: synchronizeFlag is RESYNCHRONIZE, but the received Ping StateFlag is not RESYNCHRONIZE."
+              end
+
+              case state_flag
+              in .sent?
+                raise Exception.new "Enhanced::State::WebSocket.synchronize: Ping StateFlag is SENT, Unexpected Error."
+              in .received_confirmed?
+                sentRound.add 1_u64
+                @mutex.synchronize { sentBufferSet.clear }
+                sent_sequence_reset
+              in .resynchronize?
+                peer_sent_sequence, peer_receive_sequence, peer_receive_round = parse_resynchronize_frame memory_slice: memory_slice
+                received_confirmed = ((peer_receive_round - 1_u64) == sentRound.get) && (sentSequence.get == maximum_sent_sequence) && (peer_receive_sequence == -1_i8) rescue false
+
+                if received_confirmed
+                  sentRound.add 1_u64
+                  @mutex.synchronize { sentBufferSet.clear }
+                  sent_sequence_reset
+                else
+                  raise Exception.new "Enhanced::State::WebSocket.synchronize: peerReceiveSequence does not match sentSequence!" if peer_receive_sequence > sentSequence.get
+
+                  @mutex.synchronize do
+                    sentBufferSet.each_with_index do |slice, index|
+                      next if index <= peer_receive_sequence
+                      @sentMutex.synchronize { io.send data: slice }
+                    end
+                  end
+                end
+              in .command?
+                break unless transporting?
+                break unless command_flag = parse_command_flag? memory_slice: memory_slice
+                break unless unix_ms = parse_unix_ms? memory_slice: memory_slice
+
+                self.received_command = Tuple.new unix_ms, command_flag
+                process_response_pending_command_negotiate io: io if synchronize_flag.negotiate?
+
+                case command_flag
+                in .connection_reuse?
+                  self.received_passive_ask_command = true
+                  self.any_done = true
+
+                  raise Transfer::TerminateConnection.new "Enhanced::State::WebSocket.synchronize: Received Ping CommandFlag::CONNECTION_REUSE from io."
+                in .connection_pause?
+                  self.received_passive_ask_command = true
+                  self.any_done = true
+
+                  raise Transfer::TerminateConnection.new "Enhanced::State::WebSocket.synchronize: Received Ping CommandFlag::CONNECTION_PAUSE from io."
+                end
+              in .incoming?
+                raise State::IncomingAlert.new
+              end
+            when .pong?
+              memory_slice = IO::Memory.new receive_buffer.to_slice[0_i32, receive.size]
+              state_flag = parse_state_flag? memory_slice: memory_slice
+
+              break if state_flag.nil?
+
+              case state_flag
+              in .sent?
+              in .received_confirmed?
+              in .resynchronize?
+              in .command?
+                break unless transporting?
+                break unless command_flag = parse_command_flag? memory_slice: memory_slice
+
+                case command_flag
+                in .connection_reuse?
+                  self.received_send_reply_command = true
+                  self.any_done = true
+
+                  raise Transfer::TerminateConnection.new "Enhanced::State::WebSocket.synchronize: Received Pong CommandFlag::CONNECTION_REUSE from io."
+                in .connection_pause?
+                  self.received_send_reply_command = true
+                  self.any_done = true
+
+                  raise Transfer::TerminateConnection.new "Enhanced::State::WebSocket.synchronize: Received Pong CommandFlag::CONNECTION_PAUSE from io."
+                end
+              in .incoming?
+                raise State::IncomingAlert.new
+              end
+            end
 
             break
           end
 
-          return RBFlag::BUSY
+          self.synchronizing = false
+          RBFlag::NONE
         end
+      end
 
-        receive_buffer = uninitialized UInt8[8192_i32]
-
-        loop do
-          receive = @receiveMutex.synchronize { io.receive receive_buffer.to_slice }
-
-          if synchronize_flag.resynchronize? && receive.opcode.binary?
-            raise Exception.new "Enhanced::State::WebSocket.synchronize: synchronizeFlag is RESYNCHRONIZE, Binary Opcode is received! (Unexpected)."
-          end
-
-          case receive.opcode
-          when .binary?
-            break if synchronize_flag.negotiate?
-            memory_slice = IO::Memory.new receive_buffer.to_slice[0_i32, receive.size]
-            break unless state_flag = parse_state_flag? memory_slice: memory_slice
-            break unless state_flag.sent?
-
-            receiveSequence.add 1_i8 if transporting?
-            peer_sent_sequence, size = parse_sent_frame memory_slice: memory_slice
-            receive_sequence = receiveSequence.get
-
-            if transporting? && (peer_sent_sequence != receive_sequence)
-              receiveSequence.add -1_i8 if transporting?
-              raise Exception.new "Enhanced::State::WebSocket.synchronize: peerSentSequence does not match receiveSequence!"
-            end
-
-            @receiveMutex.synchronize do
-              if receiveBuffer.pos == receiveBuffer.size
-                receiveBuffer.rewind
-                receiveBuffer.clear
-              end
-
-              receive_buffer_pos = receiveBuffer.pos.dup
-              receiveBuffer.pos = receiveBuffer.size
-              IO.copy memory_slice, receiveBuffer
-              receiveBuffer.pos = receive_buffer_pos
-            end
-
-            process_receive_end_of_reached io: io if receive_end_of_reached?
-          when .ping?
-            memory_slice = IO::Memory.new receive_buffer.to_slice[0_i32, receive.size]
-            state_flag = parse_state_flag? memory_slice: memory_slice
-            break pong io: io, slice: nil if state_flag.nil?
-
-            if synchronize_flag.resynchronize? && !state_flag.resynchronize?
-              raise Exception.new "Enhanced::State::WebSocket.synchronize: synchronizeFlag is RESYNCHRONIZE, but the received Ping StateFlag is not RESYNCHRONIZE."
-            end
-
-            case state_flag
-            in .sent?
-              raise Exception.new "Enhanced::State::WebSocket.synchronize: Ping StateFlag is SENT, Unexpected Error."
-            in .received_confirmed?
-              @mutex.synchronize { sentBufferSet.clear }
-              sent_sequence_reset
-              sentRound.add 1_u64
-            in .resynchronize?
-              peer_sent_sequence, peer_receive_sequence, peer_receive_round = parse_resynchronize_frame memory_slice: memory_slice
-              received_confirmed = ((peer_receive_round - 1_u64) == sentRound.get) && (sentSequence.get == maximum_sent_sequence) && (peer_receive_sequence == -1_i8) rescue false
-
-              if received_confirmed
-                sentRound.add 1_u64
-                @mutex.synchronize { sentBufferSet.clear }
-                sent_sequence_reset
-              else
-                raise Exception.new "Enhanced::State::WebSocket.synchronize: peerReceiveSequence does not match sentSequence!" if peer_receive_sequence > sentSequence.get
-
-                @mutex.synchronize do
-                  sentBufferSet.each_with_index do |slice, index|
-                    next if index <= peer_receive_sequence
-                    @sentMutex.synchronize { io.send data: slice }
-                  end
-                end
-              end
-            in .command?
-              break unless transporting?
-              break unless command_flag = parse_command_flag? memory_slice: memory_slice
-              break unless unix_ms = parse_unix_ms? memory_slice: memory_slice
-
-              self.received_command = Tuple.new unix_ms, command_flag
-              process_response_pending_command_negotiate io: io if synchronize_flag.negotiate?
-
-              case command_flag
-              in .connection_reuse?
-                self.received_passive_ask_command = true
-                self.any_done = true
-
-                raise Transfer::TerminateConnection.new "Enhanced::State::WebSocket.synchronize: Received Ping CommandFlag::CONNECTION_REUSE from io."
-              in .connection_pause?
-                self.received_passive_ask_command = true
-                self.any_done = true
-
-                raise Transfer::TerminateConnection.new "Enhanced::State::WebSocket.synchronize: Received Ping CommandFlag::CONNECTION_PAUSE from io."
-              end
-            in .incoming?
-              raise State::IncomingAlert.new
-            end
-          when .pong?
-            memory_slice = IO::Memory.new receive_buffer.to_slice[0_i32, receive.size]
-            state_flag = parse_state_flag? memory_slice: memory_slice
-            break if state_flag.nil?
-
-            case state_flag
-            in .sent?
-            in .received_confirmed?
-            in .resynchronize?
-            in .command?
-              break unless transporting?
-              break unless command_flag = parse_command_flag? memory_slice: memory_slice
-
-              case command_flag
-              in .connection_reuse?
-                self.received_send_reply_command = true
-                self.any_done = true
-
-                raise Transfer::TerminateConnection.new "Enhanced::State::WebSocket.synchronize: Received Pong CommandFlag::CONNECTION_REUSE from io."
-              in .connection_pause?
-                self.received_send_reply_command = true
-                self.any_done = true
-
-                raise Transfer::TerminateConnection.new "Enhanced::State::WebSocket.synchronize: Received Pong CommandFlag::CONNECTION_PAUSE from io."
-              end
-            in .incoming?
-              raise State::IncomingAlert.new
-            end
-          end
-
-          break
+      protected def synchronize_ready?(synchronize_flag : SynchronizeFlag) : RBFlag?
+        case synchronize_flag
+        in .readable?
+          return RBFlag::READY unless @receiveMutex.synchronize { receiveBuffer.pos == receiveBuffer.size }
+        in .writeable?
+          return RBFlag::READY unless transporting?
+          return RBFlag::READY unless sentSequence.get == maximum_sent_sequence
+        in .resynchronize?
+        in .negotiate?
         end
-
-        self.synchronizing = false
-        RBFlag::NONE
       end
 
       def update_receive_rescue_buffer(slice : Bytes) : Bool
@@ -669,16 +681,6 @@ module SOCKS::Enhanced
           end
         end
 
-        if receive_end_of_reached?
-          begin
-            process_receive_end_of_reached io: io
-          rescue ex
-            self.reading = false
-
-            raise ex
-          end
-        end
-
         begin
           wait_readable! io: io
         rescue ex
@@ -698,16 +700,6 @@ module SOCKS::Enhanced
             self.writing = true
 
             break
-          end
-        end
-
-        if receive_end_of_reached?
-          begin
-            process_receive_end_of_reached io: io
-          rescue ex
-            self.writing = false
-
-            raise ex
           end
         end
 

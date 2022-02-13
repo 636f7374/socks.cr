@@ -176,15 +176,19 @@ class SOCKS::SessionProcessor
         case transfer
         when .sent_done?
           transfer.destination.close rescue nil unless transfer.destination.closed?
+
+          break
         when .receive_done?
           transfer.source.close rescue nil unless transfer.source.closed?
+
+          break
         end
 
-        break
+        sleep 0.01_f32.seconds
       end
 
       loop do
-        next sleep 0.25_f32.seconds unless transfer.finished?
+        next sleep 0.01_f32.seconds unless transfer.finished?
 
         break
       end
@@ -222,14 +226,14 @@ class SOCKS::SessionProcessor
       end
     end
 
+    enhanced_command_flag = process_enhanced_finished source: transfer.destination, transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: side_flag
+    connection_identifier = enhanced_websocket.connection_identifier
+
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
 
       break
     end
-
-    enhanced_command_flag = process_enhanced_finished source: transfer.destination, transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: side_flag
-    connection_identifier = enhanced_websocket.connection_identifier
 
     case enhanced_command_flag
     in Enhanced::CommandFlag
@@ -295,14 +299,14 @@ class SOCKS::SessionProcessor
       end
     end
 
+    enhanced_command_flag = process_enhanced_finished source: transfer.source, transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: SideFlag::OUTBOUND
+    connection_identifier = enhanced_websocket.connection_identifier
+
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
 
       break
     end
-
-    enhanced_command_flag = process_enhanced_finished source: transfer.source, transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: SideFlag::OUTBOUND
-    connection_identifier = enhanced_websocket.connection_identifier
 
     case enhanced_command_flag
     in Enhanced::CommandFlag
@@ -342,10 +346,7 @@ class SOCKS::SessionProcessor
 
   private def decision_notify_command_flag?(transfer : Transfer, enhanced_websocket : Enhanced::WebSocket, side_flag : SideFlag, pause_pool : PausePool?, reuse_pool : ReusePool?) : Enhanced::CommandFlag?
     return if (!enhanced_websocket.allow_connection_reuse? && !enhanced_websocket.allow_connection_pause?) || !enhanced_websocket.connection_identifier
-
     _command_flag = enhanced_websocket.received_command_flag?
-    sent_exception = transfer.sent_exception?
-    receive_exception = transfer.receive_exception?
 
     unless _command_flag
       case side_flag
@@ -360,6 +361,7 @@ class SOCKS::SessionProcessor
 
     _command_flag = Enhanced::CommandFlag::CONNECTION_PAUSE unless _command_flag
     _command_flag = Enhanced::CommandFlag::CONNECTION_REUSE if transfer.sentBytes.get.zero? && transfer.receivedBytes.get.zero?
+    _command_flag = Enhanced::CommandFlag::CONNECTION_REUSE if side_flag.inbound? && transfer.receive_exception?.try { |receive_exception| receive_exception.class == IO::TimeoutError }
 
     case _command_flag
     in .connection_reuse?
