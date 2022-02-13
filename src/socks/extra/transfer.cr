@@ -331,8 +331,8 @@ class Transfer
     _socket_switch_bytes = socket_switch_bytes
     return false if _socket_switch_seconds.zero? && _socket_switch_bytes.zero?
 
-    _first_alive_time = Time.unix(seconds: _first_alive_time_unix) rescue Time.local
-    timed_socket_switch = (Time.local - _first_alive_time) > _socket_switch_seconds
+    _first_alive_time = first_alive_time.dup
+    timed_socket_switch = (Time.utc - _first_alive_time) > _socket_switch_seconds
     _socket_switch_expression = @socketSwitchExpression.get
 
     if any_side_bytes_exceed

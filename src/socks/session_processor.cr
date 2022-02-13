@@ -214,6 +214,8 @@ class SOCKS::SessionProcessor
     end
 
     decision_command_flag = decision_notify_command_flag? transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: side_flag, pause_pool: pause_pool, reuse_pool: nil
+    connection_identifier = enhanced_websocket.connection_identifier
+    _process_enhanced_finished = false
 
     if decision_command_flag
       enhanced_websocket.notify_peer_negotiate command_flag: decision_command_flag rescue nil
@@ -222,17 +224,23 @@ class SOCKS::SessionProcessor
       in .connection_reuse?
         transfer.destination.close rescue nil
       in .connection_pause?
-        transfer.source.close rescue nil if transfer.sent_done? && !transfer.receive_done? && enhanced_websocket.received_command?.nil?
+        if transfer.sent_done? && !transfer.receive_done? && enhanced_websocket.received_command?.nil?
+          enhanced_command_flag = process_enhanced_finished source: transfer.destination, transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: side_flag
+          _process_enhanced_finished = true
+
+          transfer.source.close rescue nil
+        end
       end
     end
-
-    enhanced_command_flag = process_enhanced_finished source: transfer.destination, transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: side_flag
-    connection_identifier = enhanced_websocket.connection_identifier
 
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
 
       break
+    end
+
+    unless _process_enhanced_finished
+      enhanced_command_flag = process_enhanced_finished source: transfer.destination, transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: side_flag
     end
 
     case enhanced_command_flag
@@ -299,14 +307,14 @@ class SOCKS::SessionProcessor
       end
     end
 
-    enhanced_command_flag = process_enhanced_finished source: transfer.source, transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: SideFlag::OUTBOUND
-    connection_identifier = enhanced_websocket.connection_identifier
-
     loop do
       next sleep 0.25_f32.seconds unless transfer.finished?
 
       break
     end
+
+    enhanced_command_flag = process_enhanced_finished source: transfer.source, transfer: transfer, enhanced_websocket: enhanced_websocket, side_flag: SideFlag::OUTBOUND
+    connection_identifier = enhanced_websocket.connection_identifier
 
     case enhanced_command_flag
     in Enhanced::CommandFlag
