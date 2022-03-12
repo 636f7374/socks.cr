@@ -8,13 +8,10 @@ struct SOCKS::Options
   end
 
   struct Switcher
-    property enableConnectionIdentifier : Bool
-    property allowConnectionPause : Bool
-    property allowConnectionReuse : Bool
     property allowTCPBinding : Bool
     property allowAssociateUDP : Bool
 
-    def initialize(@enableConnectionIdentifier : Bool = true, @allowConnectionPause : Bool = true, @allowConnectionReuse : Bool = true, @allowTCPBinding : Bool = true, @allowAssociateUDP : Bool = true)
+    def initialize(@allowTCPBinding : Bool = true, @allowAssociateUDP : Bool = true)
     end
   end
 
@@ -49,10 +46,13 @@ struct SOCKS::Options
         property resource : String
         property headers : HTTP::Headers
         property dataRaw : String?
+        property enableConnectionIdentifier : Bool
+        property allowConnectionPause : Bool
+        property allowConnectionReuse : Bool
         property maximumSentSequence : Int8
         property maximumReceiveSequence : Int8
 
-        def initialize(@address : Address, @resource : String, @headers : HTTP::Headers, @dataRaw : String?, @maximumSentSequence : Int8 = Int8::MAX, @maximumReceiveSequence : Int8 = Int8::MAX)
+        def initialize(@address : Address, @resource : String, @headers : HTTP::Headers, @dataRaw : String?, @enableConnectionIdentifier : Bool = true, @allowConnectionPause : Bool = true, @allowConnectionReuse : Bool = true, @maximumSentSequence : Int8 = Int8::MAX, @maximumReceiveSequence : Int8 = Int8::MAX)
         end
       end
     end
@@ -87,10 +87,13 @@ struct SOCKS::Options
 
     abstract struct Wrapper
       struct WebSocket < Wrapper
+        property enableConnectionIdentifier : Bool
+        property allowConnectionPause : Bool
+        property allowConnectionReuse : Bool
         property maximumSentSequence : Int8
         property maximumReceiveSequence : Int8
 
-        def initialize(@maximumSentSequence : Int8 = Int8::MAX, @maximumReceiveSequence : Int8 = Int8::MAX)
+        def initialize(@enableConnectionIdentifier : Bool = true, @allowConnectionPause : Bool = true, @allowConnectionReuse : Bool = true, @maximumSentSequence : Int8 = Int8::MAX, @maximumReceiveSequence : Int8 = Int8::MAX)
         end
       end
     end

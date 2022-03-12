@@ -12,11 +12,9 @@ dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 # Create SOCKS::Options.
 
 options = SOCKS::Options.new
-options.client.wrapper = SOCKS::Options::Client::Wrapper::WebSocket.new address: SOCKS::Address.new(host: "0.0.0.0", port: 1234_i32), resource: "/", headers: HTTP::Headers.new, dataRaw: nil, maximumSentSequence: Int8::MAX, maximumReceiveSequence: Int8::MAX
-options.switcher.enableConnectionIdentifier = true
-options.switcher.allowConnectionReuse = true
 options.switcher.allowTCPBinding = true
 options.switcher.allowAssociateUDP = true
+options.client.wrapper = SOCKS::Options::Client::Wrapper::WebSocket.new address: SOCKS::Address.new(host: "0.0.0.0", port: 1234_i32), resource: "/", headers: HTTP::Headers.new, dataRaw: nil, enableConnectionIdentifier: true, allowConnectionReuse: true, allowConnectionPause: false, maximumSentSequence: Int8::MAX, maximumReceiveSequence: Int8::MAX
 
 # `SOCKS::Client.new` will create a socket connected to the destination address.
 # Then you can add Authentication Methods, such as `UserNamePassword`.

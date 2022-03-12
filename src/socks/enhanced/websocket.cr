@@ -89,11 +89,8 @@ module SOCKS::Enhanced
     end
     {% end %}
 
-    def reset_settings(allow_connection_reuse : Bool? = nil, allow_connection_pause : Bool? = nil, connection_identifier : UUID? = nil) : Bool
-      self.connection_identifier = connection_identifier
-      state.reset_settings allow_connection_reuse: allow_connection_reuse, allow_connection_pause: allow_connection_pause
-
-      true
+    def reset_settings(command_flag : CommandFlag?) : Bool
+      state.reset_settings command_flag: command_flag
     end
 
     def process_response_pending_command_negotiate
@@ -124,8 +121,8 @@ module SOCKS::Enhanced
       state.resynchronize io: io
     end
 
-    def synchronize(synchronize_flag : State::SynchronizeFlag)
-      state.synchronize io: io, synchronize_flag: synchronize_flag
+    def synchronize(synchronize_flag : State::SynchronizeFlag, ignore_incoming_alert : Bool = true)
+      state.synchronize io: io, synchronize_flag: synchronize_flag, ignore_incoming_alert: ignore_incoming_alert
     end
 
     def ping(slice : Bytes?)

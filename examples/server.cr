@@ -12,10 +12,9 @@ dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 # `SOCKS::Options`, adjust the server policy, such as whether to allow WebSocketKeepAlive.
 
 options = SOCKS::Options.new
-options.switcher.enableConnectionIdentifier = true
-options.switcher.allowConnectionPause = true
-options.switcher.allowConnectionReuse = true
-options.server.wrapper = SOCKS::Options::Server::Wrapper::WebSocket.new maximumSentSequence: Int8::MAX, maximumReceiveSequence: Int8::MAX
+options.switcher.allowTCPBinding = true
+options.switcher.allowAssociateUDP = true
+options.server.wrapper = SOCKS::Options::Server::Wrapper::WebSocket.new maximumSentSequence: Int8::MAX, maximumReceiveSequence: Int8::MAX, enableConnectionIdentifier: true, allowConnectionPause: true, allowConnectionReuse: true
 options.server.pausePool = SOCKS::Options::Server::PausePool.new clearInterval: 60_i32.seconds, capacity: 128_i32, socketSwitchSeconds: 720_i32.seconds, socketSwitchBytes: 100000000_i32, socketSwitchExpression: Transfer::SocketSwitchExpressionFlag::OR
 options.session.aliveInterval = 30_i32.seconds
 

@@ -29,8 +29,9 @@ class Transfer
   property heartbeatCallback : Proc(Transfer, Time::Span, Bool)?
   getter firstAliveTime : Atomic(Int64)
   getter lastAliveTime : Atomic(Int64)
+  getter monitor : Atomic(Int8)
   getter monitorCapacity : Atomic(Int8)
-  getter monitorState : Hash(SRFlag, Hash(Int64, UInt64))
+  getter monitorState : Hash(SRFlag, Hash(Int64, UInt64))?
   getter sentDone : Atomic(Int8)
   getter receiveDone : Atomic(Int8)
   getter sentBytes : Atomic(UInt64)
@@ -49,8 +50,9 @@ class Transfer
   def initialize(@source : IO, @destination : IO, @finishCallback : Proc(Transfer, UInt64, UInt64, Nil)? = nil, @heartbeatCallback : Proc(Transfer, Time::Span, Bool)? = nil)
     @firstAliveTime = Atomic(Int64).new -1_i64
     @lastAliveTime = Atomic(Int64).new -1_i64
+    @monitor = Atomic(Int8).new -1_i8
     @monitorCapacity = Atomic(Int8).new Int8::MAX
-    @monitorState = Hash(SRFlag, Hash(Int64, UInt64)).new
+    @monitorState = monitor? ? Hash(SRFlag, Hash(Int64, UInt64)).new : nil
     @sentDone = Atomic(Int8).new -1_i8
     @receiveDone = Atomic(Int8).new -1_i8
     @sentBytes = Atomic(UInt64).new 0_u64
@@ -77,38 +79,6 @@ class Transfer
 
   def last_alive_time : Time
     Time.unix_ms(milliseconds: @lastAliveTime.get) rescue Time.utc
-  end
-
-  def source_tls_sockets=(value : Set(OpenSSL::SSL::Socket::Server))
-    @mutex.synchronize { @sourceTlsSockets = value }
-  end
-
-  def source_tls_sockets
-    @mutex.synchronize { @sourceTlsSockets }
-  end
-
-  def source_tls_contexts=(value : Set(OpenSSL::SSL::Context::Server))
-    @mutex.synchronize { @sourceTlsContexts = value }
-  end
-
-  def source_tls_contexts
-    @mutex.synchronize { @sourceTlsContexts }
-  end
-
-  def destination_tls_sockets=(value : Set(OpenSSL::SSL::Socket::Client))
-    @mutex.synchronize { @destinationTlsSockets = value }
-  end
-
-  def destination_tls_sockets
-    @mutex.synchronize { @destinationTlsSockets }
-  end
-
-  def destination_tls_contexts=(value : Set(OpenSSL::SSL::Context::Client))
-    @mutex.synchronize { @destinationTlsContexts = value }
-  end
-
-  def destination_tls_contexts
-    @mutex.synchronize { @destinationTlsContexts }
   end
 
   def sent_exception=(value : Exception?)
@@ -139,49 +109,55 @@ class Transfer
   {% for name in ["sent", "receive"] %}
   private def monitor_state_{{name.id}}_size : Int32?
     @mutex.synchronize do
-      return unless monitor_{{name.id}}_bytes = monitorState[SRFlag::{{name.upcase.id}}]?
+      return unless monitor_state = monitorState
+      return unless monitor_{{name.id}}_bytes = monitor_state[SRFlag::{{name.upcase.id}}]?
       monitor_{{name.id}}_bytes.size
     end
   end
 
-  def update_monitor_{{name.id}}_bytes(value : Int)
+  private def update_monitor_{{name.id}}_bytes(value : Int)
+    return unless monitor?
+
     monitor_state_{{name.id}}_size.try do |_monitor_state_{{name.id}}_size|
-      @mutex.synchronize { monitorState[SRFlag::{{name.upcase.id}}].clear } if monitorCapacity.get <= _monitor_state_{{name.id}}_size
+      return unless monitor_state = monitorState
+      @mutex.synchronize { monitor_state[SRFlag::{{name.upcase.id}}].clear } if monitorCapacity.get <= _monitor_state_{{name.id}}_size
     end
 
     @mutex.synchronize do
-      monitor_{{name.id}}_bytes = monitorState[SRFlag::{{name.upcase.id}}]? || Hash(Int64, UInt64).new
+      return unless monitor_state = monitorState
+      monitor_{{name.id}}_bytes = monitor_state[SRFlag::{{name.upcase.id}}]? || Hash(Int64, UInt64).new
       current_time = Time.local.at_beginning_of_second.to_unix
 
       {{name.id}}_bytes = monitor_{{name.id}}_bytes[current_time]? || 0_u64
       {{name.id}}_bytes += value
 
       monitor_{{name.id}}_bytes[current_time] = {{name.id}}_bytes
-      monitorState[SRFlag::{{name.upcase.id}}] = monitor_{{name.id}}_bytes
+      monitor_state[SRFlag::{{name.upcase.id}}] = monitor_{{name.id}}_bytes
     end
 
     true
   end
 
-  def get_monitor_{{name.id}}_state(all : Bool = false) : Hash(Int64, UInt64)
+  def get_monitor_{{name.id}}_state(all : Bool = false) : Hash(Int64, UInt64)?
     @mutex.synchronize do
-      monitor_{{name.id}}_bytes = monitorState[SRFlag::{{name.upcase.id}}]?.dup || Hash(Int64, UInt64).new
+      return unless monitor_state = monitorState
+      monitor_{{name.id}}_bytes = monitor_state[SRFlag::{{name.upcase.id}}]?.dup || Hash(Int64, UInt64).new
 
       if !all && !monitor_{{name.id}}_bytes.empty?
         monitor_{{name.id}}_bytes_last_key = monitor_{{name.id}}_bytes.keys.last
         monitor_{{name.id}}_bytes_last_value = monitor_{{name.id}}_bytes[monitor_{{name.id}}_bytes_last_key]
-        monitorState[SRFlag::{{name.upcase.id}}].clear
-        monitorState[SRFlag::{{name.upcase.id}}][monitor_{{name.id}}_bytes_last_key] = monitor_{{name.id}}_bytes_last_value
+        monitor_state[SRFlag::{{name.upcase.id}}].clear
+        monitor_state[SRFlag::{{name.upcase.id}}][monitor_{{name.id}}_bytes_last_key] = monitor_{{name.id}}_bytes_last_value
         monitor_{{name.id}}_bytes.delete monitor_{{name.id}}_bytes_last_key
       end
 
-      monitor_{{name.id}}_bytes
+      monitor_{{name.id}}_bytes.dup
     end
   end
   {% end %}
 
   def reset_monitor_state : Bool
-    @mutex.synchronize { @monitorState.clear }
+    @mutex.synchronize { @monitorState.try &.clear }
 
     true
   end
@@ -205,22 +181,23 @@ class Transfer
     receiveDone.get.zero?
   end
 
+  def monitor? : Bool
+    monitor.get.zero?
+  end
+
   def cleanup
     source.close rescue nil
     destination.close rescue nil
 
     loop do
       next sleep 0.25_f32.seconds unless finished = self.finished?
+      reset_socket
 
-      free_source_tls
-      free_destination_tls
-
-      reset_socket reset_tls: true
       break
     end
   end
 
-  def cleanup(sd_flag : SDFlag, free_tls : Bool, reset : Bool = true)
+  def cleanup(sd_flag : SDFlag, reset : Bool = true)
     case sd_flag
     in .source?
       source.close rescue nil
@@ -230,37 +207,23 @@ class Transfer
 
     loop do
       next sleep 0.25_f32.seconds unless finished = self.finished?
+      reset_socket sd_flag: sd_flag if reset
 
-      case sd_flag
-      in .source?
-        free_source_tls
-      in .destination?
-        free_destination_tls
-      end
-
-      reset_socket sd_flag: sd_flag, reset_tls: free_tls if reset
       break
     end
   end
 
-  def reset_socket(reset_tls : Bool)
+  def reset_socket
     @concurrentMutex.synchronize do
       closed_memory = IO::Memory.new 0_i32
       closed_memory.close
 
       @source = closed_memory
       @destination = closed_memory
-
-      if reset_tls
-        @sourceTlsSockets = nil
-        @sourceTlsContexts = nil
-        @destinationTlsSockets = nil
-        @destinationTlsContexts = nil
-      end
     end
   end
 
-  def reset_socket(sd_flag : SDFlag, reset_tls : Bool)
+  def reset_socket(sd_flag : SDFlag)
     @concurrentMutex.synchronize do
       closed_memory = IO::Memory.new 0_i32
       closed_memory.close
@@ -268,34 +231,10 @@ class Transfer
       case sd_flag
       in .source?
         @source = closed_memory
-
-        if reset_tls
-          @sourceTlsSockets = nil
-          @sourceTlsContexts = nil
-        end
       in .destination?
         @destination = closed_memory
-
-        if reset_tls
-          @destinationTlsSockets = nil
-          @destinationTlsContexts = nil
-        end
       end
     end
-  end
-
-  private def free_source_tls
-    source_tls_sockets.try &.each &.free
-    source_tls_contexts.try &.each &.free
-
-    true
-  end
-
-  private def free_destination_tls
-    destination_tls_sockets.try &.each &.free
-    destination_tls_contexts.try &.each &.free
-
-    true
   end
 
   def reset_settings!(reset_socket_switch_seconds : Bool = true, reset_socket_switch_bytes : Bool = true, reset_socket_switch_expression : Bool = true) : Bool
@@ -306,7 +245,7 @@ class Transfer
       @receiveException = nil
       @firstAliveTime.set -1_i64
       @lastAliveTime.set -1_i64
-      @monitorState.clear
+      @monitorState.try &.clear
       @exceedThresholdFlag.set ExceedThresholdFlag::NONE
       @sentDone.set -1_i8
       @receiveDone.set -1_i8
@@ -487,19 +426,30 @@ class Transfer
     end
 
     interval_fiber = spawn do
-      _last_alive_time = nil
+      interval = 0.25_f32.seconds
+      heartbeat_callback = heartbeatCallback
+      finish_callback = finishCallback
+      _last_alive_time = Time.local
 
-      loop do
-        next _last_alive_time = Time.local unless _last_alive_time
-        sleep 0.25_f32.seconds if (Time.local - _last_alive_time) < 0.1_f32.seconds
+      if heartbeat_callback
+        loop do
+          sleep interval if (Time.local - _last_alive_time) < interval
 
-        break finishCallback.try &.call self, sentBytes.get, receivedBytes.get if sent_done? && receive_done?
-        next _last_alive_time = Time.local unless heartbeat_callback = heartbeatCallback
-        next _last_alive_time = Time.local if sent_done? || receive_done?
+          successful = heartbeat_callback.call self, heartbeatInterval rescue nil
+          @heartbeatCounter.add(1_i64) rescue nil if successful
+          _last_alive_time = Time.local
 
-        successful = heartbeat_callback.call self, heartbeatInterval rescue nil
-        @heartbeatCounter.add(1_i64) rescue nil if successful
-        _last_alive_time = Time.local
+          break if sent_done? || receive_done?
+        end
+      end
+
+      if finish_callback
+        loop do
+          sleep interval if (Time.local - _last_alive_time) < interval
+          break finish_callback.call self, sentBytes.get, receivedBytes.get if sent_done? && receive_done?
+
+          _last_alive_time = Time.local
+        end
       end
     end
 

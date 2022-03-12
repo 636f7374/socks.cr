@@ -247,7 +247,7 @@ class SOCKS::SessionProcessor
     in Enhanced::CommandFlag
       case enhanced_command_flag
       in .connection_reuse?
-        enhanced_websocket.reset_settings allow_connection_reuse: enhanced_websocket.allow_connection_reuse?, allow_connection_pause: enhanced_websocket.allow_connection_pause?, connection_identifier: enhanced_websocket.connection_identifier
+        enhanced_websocket.reset_settings command_flag: Enhanced::CommandFlag::CONNECTION_REUSE
         transfer.reset_settings! reset_socket_switch_seconds: false, reset_socket_switch_bytes: false, reset_socket_switch_expression: false
 
         case side_flag
@@ -260,24 +260,24 @@ class SOCKS::SessionProcessor
         end
 
         session.holding = nil
-        session.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
+        session.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
 
         Enhanced::CommandFlag::CONNECTION_REUSE
       in .connection_pause?
-        enhanced_websocket.reset_settings allow_connection_reuse: enhanced_websocket.allow_connection_reuse?, allow_connection_pause: enhanced_websocket.allow_connection_pause?, connection_identifier: enhanced_websocket.connection_identifier
+        enhanced_websocket.reset_settings command_flag: Enhanced::CommandFlag::CONNECTION_PAUSE
         transfer.reset_settings! reset_socket_switch_seconds: false, reset_socket_switch_bytes: false, reset_socket_switch_expression: false
 
         session.holding.try &.close rescue nil
         session.holding = nil
-        session.cleanup sd_flag: Transfer::SDFlag::SOURCE, free_tls: true, reset: true
-        session.set_transfer_tls transfer: transfer, reset: true
-        transfer.reset_socket sd_flag: Transfer::SDFlag::SOURCE, reset_tls: true
+        session.cleanup sd_flag: Transfer::SDFlag::SOURCE, reset: true
+
+        transfer.reset_socket sd_flag: Transfer::SDFlag::SOURCE
         connection_identifier.try { |_connection_identifier| pause_pool.try &.set connection_identifier: _connection_identifier, value: transfer, state: enhanced_websocket.state }
 
         Enhanced::CommandFlag::CONNECTION_PAUSE
       end
     in Nil
-      enhanced_websocket.reset_settings allow_connection_reuse: nil, allow_connection_pause: nil, connection_identifier: nil
+      enhanced_websocket.reset_settings command_flag: nil
       transfer.reset_settings! reset_socket_switch_seconds: false, reset_socket_switch_bytes: false, reset_socket_switch_expression: false
       connection_identifier.try { |_connection_identifier| pause_pool.try &.remove_connection_identifier connection_identifier: _connection_identifier }
 
@@ -320,30 +320,30 @@ class SOCKS::SessionProcessor
     in Enhanced::CommandFlag
       case enhanced_command_flag
       in .connection_reuse?
-        enhanced_websocket.reset_settings allow_connection_reuse: enhanced_websocket.allow_connection_reuse?, allow_connection_pause: enhanced_websocket.allow_connection_pause?, connection_identifier: enhanced_websocket.connection_identifier
+        enhanced_websocket.reset_settings command_flag: Enhanced::CommandFlag::CONNECTION_REUSE
         transfer.reset_settings! reset_socket_switch_seconds: false, reset_socket_switch_bytes: false, reset_socket_switch_expression: false
 
         session.holding.try &.close rescue nil
         session.holding = nil
-        session.cleanup sd_flag: Transfer::SDFlag::SOURCE, free_tls: true, reset: true
-        session.set_transfer_tls transfer: transfer, reset: true
-        transfer.reset_socket sd_flag: Transfer::SDFlag::SOURCE, reset_tls: true
+        session.cleanup sd_flag: Transfer::SDFlag::SOURCE, reset: true
+
+        transfer.reset_socket sd_flag: Transfer::SDFlag::SOURCE
         reuse_pool.try { |_reuse_pool| _reuse_pool.unshift value: transfer }
 
         Enhanced::CommandFlag::CONNECTION_REUSE
       in .connection_pause?
-        enhanced_websocket.reset_settings allow_connection_reuse: enhanced_websocket.allow_connection_reuse?, allow_connection_pause: enhanced_websocket.allow_connection_pause?, connection_identifier: enhanced_websocket.connection_identifier
-        transfer.reset_settings! reset_socket_switch_seconds: false, reset_socket_switch_bytes: false, reset_socket_switch_expression: false
+        enhanced_websocket.reset_settings command_flag: Enhanced::CommandFlag::CONNECTION_PAUSE
+        transfer.reset_socket
 
         session.holding.try &.close rescue nil
         session.holding = nil
-        session.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
+        session.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
 
         Enhanced::CommandFlag::CONNECTION_PAUSE
       end
     in Nil
-      enhanced_websocket.reset_settings allow_connection_reuse: nil, allow_connection_pause: nil, connection_identifier: nil
-      transfer.reset_settings! reset_socket_switch_seconds: false, reset_socket_switch_bytes: false, reset_socket_switch_expression: false
+      enhanced_websocket.reset_settings command_flag: nil
+      transfer.reset_socket
 
       session.syncCloseOutbound = true
       session.cleanup

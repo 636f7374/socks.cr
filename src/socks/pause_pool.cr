@@ -41,7 +41,7 @@ class SOCKS::PausePool
         entries.delete connection_identifier
 
         transfer_destination_reset_socket entry: entry
-        entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
+        entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
       end
     end
   end
@@ -73,7 +73,7 @@ class SOCKS::PausePool
       entries.delete connection_identifier
 
       transfer_destination_reset_socket entry: entry
-      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
+      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
     end
 
     return unless need_cleared?
@@ -85,7 +85,7 @@ class SOCKS::PausePool
       entries.delete connection_identifier
 
       transfer_destination_reset_socket entry: entry
-      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
+      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
     end
 
     refresh_last_cleaned_up
@@ -105,7 +105,7 @@ class SOCKS::PausePool
 
       entries[connection_identifier]?.try do |_entry|
         transfer_destination_reset_socket entry: _entry
-        _entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
+        _entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
       end
 
       entries[connection_identifier] = Entry.new transfer: value, state: state

@@ -17,7 +17,7 @@ class SOCKS::ReusePool
         entries.delete entry
 
         transfer_destination_reset_socket entry: entry
-        entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
+        entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
       end
     end
   end
@@ -47,7 +47,7 @@ class SOCKS::ReusePool
       entries.delete entry
 
       transfer_destination_reset_socket entry: entry
-      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
+      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
     end
 
     return unless need_cleared?
@@ -57,7 +57,7 @@ class SOCKS::ReusePool
       entries.delete entry
 
       transfer_destination_reset_socket entry: entry
-      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
+      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
     end
 
     refresh_last_cleaned_up
@@ -88,7 +88,7 @@ class SOCKS::ReusePool
 
         if clearInterval <= (Time.local - entries_first.created_at)
           transfer_destination_reset_socket entry: entry
-          entries_first.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, free_tls: true, reset: true
+          entries_first.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
 
           next
         end
