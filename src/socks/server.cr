@@ -171,13 +171,6 @@ class SOCKS::Server
     raise Exception.new "Server.establish!: Establish.commandType cannot be Nil!" unless command_type = from_establish.commandType
     raise Exception.new "Server.establish!: Establish.destinationAddress or destinationIpAddress cannot be Nil!" unless destination_address = from_establish.get_destination_address
 
-    begin
-      check_destination_blocker! destination_address: destination_address
-    rescue ex
-      send_establish_frame session: session, status_flag: Frames::StatusFlag::ConnectionDenied, destination_ip_address: nil
-      raise ex
-    end
-
     return Tuple.new from_establish, command_type, destination_address unless start_immediately
     establish! session: session, from_establish: from_establish, sync_create_outbound_socket: sync_create_outbound_socket
 
@@ -304,56 +297,6 @@ class SOCKS::Server
       session_inbound = session.inbound
       session.inbound = bind_socket
       session.holding = session_inbound
-    end
-
-    true
-  end
-
-  private def check_destination_blocker!(destination_address : Address | Socket::IPAddress) : Bool
-    # This function is used as an overridable.
-
-    __check_destination_blocker! destination_address: destination_address
-  end
-
-  private def __check_destination_blocker!(destination_address : Address | Socket::IPAddress) : Bool
-    return true unless destination_blocker = options.server.destinationBlocker
-
-    case destination_address
-    in Address
-      to_ip_address = Socket::IPAddress.new address: destination_address.host, port: destination_address.port rescue nil
-      destination_address = to_ip_address if to_ip_address
-    in Socket::IPAddress
-    end
-
-    case destination_address
-    in Address
-      find = destination_blocker.addresses.find do |protection_address|
-        case protection_address.port
-        when 0_i32
-          protection_address.host == destination_address.host
-        else
-          (protection_address.host == destination_address.host) && (protection_address.port == destination_address.port)
-        end
-      end
-
-      raise Exception.new "Server.__check_destination_blocker!: Establish.destinationAddress is in your preset destinationBlocker!" if find
-
-      case server_local_address = io.local_address
-      in Socket::UNIXAddress
-      in Socket::IPAddress
-        _server_address = Address.new host: "localhost", port: server_local_address.port
-        raise Exception.new "Server.__check_destination_blocker!: Establish.destinationAddress conflicts with your server address!" if destination_address == _server_address
-      in Socket::Address
-      end
-    in Socket::IPAddress
-      case server_local_address = io.local_address
-      in Socket::UNIXAddress
-      in Socket::IPAddress
-        raise Exception.new "Server.__check_destination_blocker!: Establish.destinationAddress conflicts with your server address!" if InterfaceAddress.includes? ip_address: destination_address, server_port: server_local_address.port
-      in Socket::Address
-      end
-
-      raise Exception.new "Server.__check_destination_blocker!: Establish.destinationAddress is in your preset destinationBlocker!" if destination_blocker.ipAddresses.includes? destination_address
     end
 
     true

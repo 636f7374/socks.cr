@@ -60,10 +60,9 @@ struct SOCKS::Options
 
   struct Server
     property pausePool : PausePool
-    property destinationBlocker : DestinationBlocker?
     property wrapper : Wrapper?
 
-    def initialize(@pausePool : PausePool = PausePool.new, @destinationBlocker : DestinationBlocker = DestinationBlocker.new, @wrapper : Wrapper? = nil)
+    def initialize(@pausePool : PausePool = PausePool.new, @wrapper : Wrapper? = nil)
     end
 
     struct PausePool
@@ -74,14 +73,6 @@ struct SOCKS::Options
       property socketSwitchExpression : Transfer::SocketSwitchExpressionFlag
 
       def initialize(@clearInterval : Time::Span = 60_i32.seconds, @capacity : Int32 = 128_i32, @socketSwitchSeconds : Time::Span = 720_i32.seconds, @socketSwitchBytes : UInt64 = 100000000_u64, @socketSwitchExpression : Transfer::SocketSwitchExpressionFlag = Transfer::SocketSwitchExpressionFlag::OR)
-      end
-    end
-
-    struct DestinationBlocker
-      property addresses : Set(Address)
-      property ipAddresses : Set(Socket::IPAddress)
-
-      def initialize(@addresses : Set(Address) = Set(Address).new, @ipAddresses : Set(Socket::IPAddress) = Set(Socket::IPAddress).new)
       end
     end
 
