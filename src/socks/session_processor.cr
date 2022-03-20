@@ -62,8 +62,17 @@ class SOCKS::SessionProcessor
     end
   end
 
-  def perform(server : Server, pause_pool : PausePool? = nil)
-    flag = perform_once server: server, pause_pool: pause_pool
+  def perform(server : Server, pause_pool : PausePool? = nil) : Enhanced::CommandFlag?
+    unless session_outbound = session.outbound
+      session.connection_identifier.try { |_connection_identifier| pause_pool.try &.remove_connection_identifier connection_identifier: _connection_identifier }
+      session.syncCloseOutbound = true
+      session.cleanup
+
+      return
+    end
+
+    transfer = Transfer.new source: session.inbound, destination: session_outbound, finishCallback: nil, heartbeatCallback: nil
+    flag = perform transfer: transfer, pause_pool: pause_pool
 
     loop do
       case flag
@@ -73,7 +82,7 @@ class SOCKS::SessionProcessor
         in .connection_pause?
           break
         end
-      in Bool
+      in Nil
         session.connection_identifier.try { |_connection_identifier| pause_pool.try &.remove_connection_identifier connection_identifier: _connection_identifier }
 
         break
@@ -83,36 +92,25 @@ class SOCKS::SessionProcessor
         server.establish! session
       rescue ex
         session.connection_identifier.try { |_connection_identifier| pause_pool.try &.remove_connection_identifier connection_identifier: _connection_identifier }
-
         session.syncCloseOutbound = true
         session.cleanup
 
         break
       end
 
-      flag = perform_once server: server, pause_pool: pause_pool
+      unless session_outbound = session.outbound
+        session.connection_identifier.try { |_connection_identifier| pause_pool.try &.remove_connection_identifier connection_identifier: _connection_identifier }
+        session.syncCloseOutbound = true
+        session.cleanup
+
+        break
+      end
+
+      transfer = Transfer.new source: session.inbound, destination: session_outbound, finishCallback: nil, heartbeatCallback: nil
+      flag = perform transfer: transfer, pause_pool: pause_pool
 
       next
     end
-  end
-
-  def perform_once(server : Server, pause_pool : PausePool? = nil) : Enhanced::CommandFlag | Bool
-    unless outbound = session.outbound
-      session.connection_identifier.try { |_connection_identifier| pause_pool.try &.remove_connection_identifier connection_identifier: _connection_identifier }
-
-      session.syncCloseOutbound = true
-      session.cleanup
-
-      return false
-    end
-
-    transfer = Transfer.new source: session, destination: outbound, finishCallback: nil, heartbeatCallback: nil
-    perform transfer: transfer, pause_pool: pause_pool
-  end
-
-  def perform(outbound : IO, reuse_pool : ReusePool? = nil) : Enhanced::CommandFlag | Bool
-    transfer = Transfer.new source: session, destination: outbound, finishCallback: nil, heartbeatCallback: nil
-    perform transfer: transfer, reuse_pool: reuse_pool
   end
 
   {% for name in ["inbound", "outbound"] %}
@@ -135,9 +133,9 @@ class SOCKS::SessionProcessor
   end
 
   {% if name == "inbound" %}
-    private def perform(transfer : Transfer, pause_pool : PausePool? = nil) : Enhanced::CommandFlag | Bool
+    def perform(transfer : Transfer, pause_pool : PausePool? = nil) : Enhanced::CommandFlag?
   {% else %}
-    def perform(transfer : Transfer, reuse_pool : ReusePool? = nil) : Enhanced::CommandFlag | Bool
+    def perform(transfer : Transfer, reuse_pool : ReusePool? = nil) : Enhanced::CommandFlag?
   {% end %}
       session.syncCloseOutbound = false
 
@@ -165,11 +163,16 @@ class SOCKS::SessionProcessor
       if tuple
         {% if name == "inbound" %}
           value = check_process_inbound_connection enhanced_websocket: tuple.last, side_flag: tuple.first, transfer: transfer, pause_pool: pause_pool
-          return value if value.is_a?(Enhanced::CommandFlag) || (true == value)
         {% else %}
           value = check_process_outbound_connection enhanced_websocket: tuple.last, transfer: transfer, reuse_pool: reuse_pool
-          return value if value.is_a?(Enhanced::CommandFlag) || (true == value)
         {% end %}
+
+        case value
+        in Enhanced::CommandFlag
+          return value
+        in Bool
+          return
+        end
       end
 
       loop do
@@ -196,7 +199,7 @@ class SOCKS::SessionProcessor
       session.syncCloseOutbound = true
       session.cleanup
 
-      false
+      nil
     end
   {% end %}
 
