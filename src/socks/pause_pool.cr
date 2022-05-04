@@ -47,11 +47,19 @@ class SOCKS::PausePool
   end
 
   private def transfer_destination_reset_socket(entry : Entry) : Bool
-    transfer_destination = entry.transfer.destination
+    transfer_destination_reset_socket transfer: entry.transfer
+  end
+
+  private def transfer_destination_reset_socket(transfer : Transfer) : Bool
+    transfer_destination = transfer.destination
     return false unless transfer_destination.is_a? Client
 
-    transfer_destination.close rescue nil
-    transfer_destination.reset_socket
+    transfer_destination_reset_socket client: transfer_destination
+  end
+
+  private def transfer_destination_reset_socket(client : Client) : Bool
+    client.close rescue nil
+    client.reset_socket
 
     true
   end
@@ -99,7 +107,14 @@ class SOCKS::PausePool
     @mutex.synchronize { entries.size.dup }
   end
 
-  def set(connection_identifier : UUID, value : Transfer, state : Enhanced::State::WebSocket)
+  def set(connection_identifier : UUID, value : Transfer, state : Enhanced::State::WebSocket) : Bool
+    if capacity.zero?
+      transfer_destination_reset_socket transfer: value
+      value.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
+
+      return false
+    end
+
     @mutex.synchronize do
       inactive_entry_cleanup
 
@@ -110,6 +125,8 @@ class SOCKS::PausePool
 
       entries[connection_identifier] = Entry.new transfer: value, state: state
     end
+
+    true
   end
 
   def get?(connection_identifier : UUID) : Entry?

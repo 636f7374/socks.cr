@@ -62,6 +62,21 @@ class SOCKS::SessionProcessor
     end
   end
 
+  {% for name in ["inbound", "outbound"] %}
+  def get_{{name.id}}_enhanced_websocket?(session : Session) : Tuple(SideFlag, Enhanced::WebSocket)?
+    {% if name == "inbound" %}
+      session_inbound = session.inbound
+      return Tuple.new SideFlag::INBOUND, session_inbound if session_inbound.is_a? Enhanced::WebSocket
+    {% else %}
+      session_outbound_client = session.outbound
+      return unless session_outbound_client.is_a? Client
+
+      session_outbound = session_outbound_client.outbound
+      return Tuple.new SideFlag::OUTBOUND, session_outbound if session_outbound.is_a? Enhanced::WebSocket
+    {% end %}
+  end
+  {% end %}
+
   def perform(server : Server, pause_pool : PausePool? = nil) : Enhanced::CommandFlag?
     unless session_outbound = session.outbound
       session.connection_identifier.try { |_connection_identifier| pause_pool.try &.remove_connection_identifier connection_identifier: _connection_identifier }
@@ -114,24 +129,6 @@ class SOCKS::SessionProcessor
   end
 
   {% for name in ["inbound", "outbound"] %}
-  def get_{{name.id}}_enhanced_websocket?(session : Session) : Tuple(SideFlag, Enhanced::WebSocket)?
-    {% if name == "inbound" %}
-      session_inbound = session.inbound
-      return Tuple.new SideFlag::INBOUND, session_inbound if session_inbound.is_a? Enhanced::WebSocket
-
-      session_holding = session.holding
-      return Tuple.new SideFlag::HOLDING,  session_holding if session_holding.is_a? Enhanced::WebSocket
-    {% else %}
-      session_outbound = session.outbound
-      return unless session_outbound.is_a? Client
-
-      enhanced_websocket = session_outbound.outbound
-      return unless enhanced_websocket.is_a? Enhanced::WebSocket
-
-      return Tuple.new SideFlag::OUTBOUND, enhanced_websocket
-    {% end %}
-  end
-
   {% if name == "inbound" %}
     def perform(transfer : Transfer, pause_pool : PausePool? = nil) : Enhanced::CommandFlag?
   {% else %}
@@ -153,9 +150,8 @@ class SOCKS::SessionProcessor
 
         {% if name == "inbound" %}
           enhanced_websocket.resynchronize rescue nil
+          enhanced_websocket.transporting = true
         {% end %}
-
-        enhanced_websocket.transporting = true
       end
 
       transfer.perform
@@ -423,11 +419,11 @@ class SOCKS::SessionProcessor
           _session_holding = session.holding
           _session_holding.ping nil if _session_holding.is_a? Enhanced::WebSocket
 
-          _session_outbound = session.outbound
-          raise Exception.new unless _session_outbound.is_a? Client
-          enhanced_websocket = _session_outbound.outbound
-          raise Exception.new unless enhanced_websocket.is_a? Enhanced::WebSocket
-          enhanced_websocket.ping nil
+          session_outbound_client = session.outbound
+          raise Exception.new unless session_outbound_client.is_a? Client
+          session_outbound = session_outbound_client.outbound
+          raise Exception.new unless session_outbound.is_a? Enhanced::WebSocket
+          session_outbound.ping nil
         rescue ex
           unless _heartbeat_callback
             transfer.reset_monitor_state
