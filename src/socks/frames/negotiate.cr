@@ -6,14 +6,12 @@ struct SOCKS::Frames
     property methods : Set(AuthenticationFlag)?
     property acceptedMethod : AuthenticationFlag?
     property authenticateFrame : Authenticate?
-    property successed : Bool?
 
     def initialize(@version : VersionFlag, @arType : ARType)
       @methodCount = nil
       @methods = nil
       @acceptedMethod = nil
       @authenticateFrame = nil
-      @successed = nil
     end
 
     def self.from_io(io : IO, ar_type : ARType, version_flag : VersionFlag = VersionFlag::V5) : Negotiate
@@ -79,8 +77,6 @@ struct SOCKS::Frames
         frame.authenticateFrame = Authenticate.from_io io: memory, ar_type: ARType::Ask, version_flag: version_flag
       end
 
-      frame.successed = true
-
       frame
     end
 
@@ -132,8 +128,6 @@ struct SOCKS::Frames
       if (memory.pos < memory.size) && accepted_method == AuthenticationFlag::UserNamePassword
         frame.authenticateFrame = Authenticate.from_io io: memory, ar_type: ARType::Reply, version_flag: version_flag
       end
-
-      frame.successed = true
 
       frame
     end

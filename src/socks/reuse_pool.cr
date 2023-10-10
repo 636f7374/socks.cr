@@ -14,30 +14,11 @@ class SOCKS::ReusePool
   def clear
     @mutex.synchronize do
       entries.each do |entry|
-        entries.delete entry
+        entries.delete object: entry
 
-        transfer_destination_reset_socket entry: entry
-        entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
+        entry.destination.close rescue nil
       end
     end
-  end
-
-  private def transfer_destination_reset_socket(entry : Entry) : Bool
-    transfer_destination_reset_socket transfer: entry.transfer
-  end
-
-  private def transfer_destination_reset_socket(transfer : Transfer) : Bool
-    transfer_destination = transfer.destination
-    return false unless transfer_destination.is_a? Client
-
-    transfer_destination_reset_socket client: transfer_destination
-  end
-
-  private def transfer_destination_reset_socket(client : Client) : Bool
-    client.close rescue nil
-    client.reset_socket
-
-    true
   end
 
   private def need_cleared?
@@ -52,20 +33,18 @@ class SOCKS::ReusePool
   private def inactive_entry_cleanup
     while capacity <= entries.size
       entry = entries.first
-      entries.delete entry
 
-      transfer_destination_reset_socket entry: entry
-      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
+      entries.delete object: entry
+      entry.destination.close rescue nil
     end
 
     return unless need_cleared?
 
     entries.each do |entry|
       next unless clearInterval <= (Time.local - entry.created_at)
-      entries.delete entry
 
-      transfer_destination_reset_socket entry: entry
-      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
+      entries.delete object: entry
+      entry.destination.close rescue nil
     end
 
     refresh_last_cleaned_up
@@ -79,47 +58,46 @@ class SOCKS::ReusePool
     @mutex.synchronize { entries.size.dup }
   end
 
-  def unshift(value : Transfer) : Bool
+  def unshift(value : Enhanced::WebSocket, options : Options) : Bool
     if capacity.zero?
-      transfer_destination_reset_socket transfer: value
-      value.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
+      value.close rescue nil
 
       return false
     end
 
     @mutex.synchronize do
       inactive_entry_cleanup
-      entries << Entry.new transfer: value
+      entries << Entry.new destination: value, options: options
     end
 
     true
   end
 
-  def get? : Transfer?
+  def get? : Entry?
     @mutex.synchronize do
       inactive_entry_cleanup
 
       loop do
         break unless entries_first = entries.first?
-        entries.delete entries_first
+        entries.delete object: entries_first
 
         if clearInterval <= (Time.local - entries_first.created_at)
-          transfer_destination_reset_socket entry: entry
-          entries_first.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
+          entries_first.close rescue nil
 
           next
         end
 
-        break entries_first.transfer
+        break entries_first
       end
     end
   end
 
   struct Entry
-    getter transfer : Transfer
+    getter destination : Enhanced::WebSocket
+    getter options : SOCKS::Options
     getter createdAt : Time
 
-    def initialize(@transfer : Transfer)
+    def initialize(@destination : Enhanced::WebSocket, @options : SOCKS::Options)
       @createdAt = Time.local
     end
 

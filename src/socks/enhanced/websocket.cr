@@ -153,10 +153,6 @@ module SOCKS::Enhanced
       io.closed?
     end
 
-    def update_receive_rescue_buffer(slice : Bytes) : Bool
-      state.update_receive_rescue_buffer slice: slice
-    end
-
     {% for name in ["send", "received"] %}
     def {{name.id}}_command? : Tuple(Int64, CommandFlag)?
       state.{{name.id}}_command?

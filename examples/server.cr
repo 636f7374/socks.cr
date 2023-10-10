@@ -14,42 +14,37 @@ dns_resolver = DNS::Resolver.new dnsServers: dns_servers
 options = SOCKS::Options.new
 options.switcher.allowTCPBinding = true
 options.switcher.allowAssociateUDP = true
+options.switcher.allowEnhancedAssociateUDP = true
 options.server.wrapper = SOCKS::Options::Server::Wrapper::WebSocket.new maximumSentSequence: Int8::MAX, maximumReceiveSequence: Int8::MAX, enableConnectionIdentifier: true, allowConnectionPause: true, allowConnectionReuse: true
 options.server.pausePool = SOCKS::Options::Server::PausePool.new clearInterval: 60_i32.seconds, capacity: 128_i32, socketSwitchSeconds: 720_i32.seconds, socketSwitchBytes: 100000000_i32, socketSwitchExpression: Transfer::SocketSwitchExpressionFlag::OR
-options.session.aliveInterval = 30_i32.seconds
+options.server.udpGateway = options_udp_gateway = SOCKS::Options::Server::UdpGateway.new listenPort: 8877_i32, externalIpv4Address: Socket::IPAddress.new(address: "127.0.0.1", port: 8877_i32), externalIpv6Address: Socket::IPAddress.new(address: "127.0.0.1", port: 8877_i32)
+options.server.udpRelay = SOCKS::Options::Server::UdpRelay.new externalIpv4Address: Socket::IPAddress.new(address: "127.0.0.1", port: 0_i32), externalIpv6Address: Socket::IPAddress.new(address: "127.0.0.1", port: 0_i32)
+options.server.tcpBinding = SOCKS::Options::Server::TcpBinding.new externalIpv4Address: Socket::IPAddress.new(address: "127.0.0.1", port: 0_i32), externalIpv6Address: Socket::IPAddress.new(address: "127.0.0.1", port: 0_i32)
+options.session.aliveInterval = 15_i32.seconds
+options.session.udpAliveInterval = 120_i32.seconds
 
 # Finally, you call `SOCKS::SessionProcessor.perform` to automatically process.
 # This example is used to demonstrate how to use it, you can modify it as appropriate.
 
+udp_gateway = options_udp_gateway ? SOCKS::UdpGateway.new(listenAddress: Socket::IPAddress.new(address: "0.0.0.0", port: options_udp_gateway.listenPort)) : nil
 tcp_server = TCPServer.new host: "0.0.0.0", port: 1234_i32
-server = SOCKS::Server.new io: tcp_server, dnsResolver: dns_resolver, options: options
+server = SOCKS::Server.new io: tcp_server, dnsResolver: dns_resolver, options: options, udpGateway: udp_gateway
 pause_pool = SOCKS::PausePool.new clearInterval: options.server.pausePool.clearInterval, capacity: options.server.pausePool.capacity
 
-server.associate_udp_timeout = SOCKS::TimeOut.udp_default
-server.udp_outbound_timeout = SOCKS::TimeOut.udp_default
-
-# Set TCPBinding Timeout.
-
-tcp_binding_timeout = SOCKS::TimeOut.new
-tcp_binding_timeout.read = 15_i32
-tcp_binding_timeout.write = 15_i32
-server.tcp_binding_timeout = tcp_binding_timeout
-
-# Set TCPOutbound Timeout.
-
-tcp_outbound_timeout = SOCKS::TimeOut.new
-tcp_outbound_timeout.read = 15_i32
-tcp_outbound_timeout.write = 15_i32
-server.tcp_outbound_timeout = tcp_outbound_timeout
-
-# Set Client Timeout.
+# Set Client, Outbound Timeout.
 
 client_timeout = SOCKS::TimeOut.new
 client_timeout.read = 15_i32
 client_timeout.write = 15_i32
-server.client_timeout = client_timeout
 
-# You can set `SOCKS::Server.authentication`, such as (`UserNamePassword` and SOCKS::Server.on_auth).
+outbound_timeout = SOCKS::TimeOut.new
+outbound_timeout.read = 15_i32
+outbound_timeout.write = 15_i32
+
+server.client_timeout = client_timeout
+server.outbound_timeout = outbound_timeout
+
+# Set `SOCKS::Server.authentication`, such as (`UserNamePassword` and SOCKS::Server.on_auth).
 
 server.authentication = SOCKS::Frames::AuthenticationFlag::UserNamePassword
 server.on_auth = ->(user_name : String?, password : String?) do
@@ -80,24 +75,28 @@ spawn do
   end
 end
 
+spawn do
+  server.udpGateway.try &.listen
+end
+
 loop do
   session = server.accept? rescue nil
-  next unless _session = session
+  next unless session
 
   spawn do
     begin
-      _session.process_upgrade! server: server, pause_pool: pause_pool
-      server.handshake! session: _session
-      server.establish! session: _session, sync_create_outbound_socket: (_session.outbound ? false : true)
+      session.process_upgrade! server: server, pause_pool: pause_pool
+      server.handshake! session: session
+      STDOUT.puts [:ESTABLISH, server.establish!(session: session, sync_create_outbound_socket: (session.destination ? false : true))]
     rescue ex
-      _session.connection_identifier.try { |_connection_identifier| pause_pool.remove_connection_identifier connection_identifier: _connection_identifier }
-      _session.syncCloseOutbound = true
-      _session.cleanup
+      session.connection_identifier.try { |_connection_identifier| pause_pool.remove_connection_identifier connection_identifier: _connection_identifier }
+      session.source.close rescue nil
+      session.destination.try &.close rescue nil
+      STDOUT.puts [:EXCEPTION, ex]
 
       next
     end
 
-    processor = SOCKS::SessionProcessor.new session: session
-    processor.perform server: server, pause_pool: pause_pool
+    SOCKS::SessionProcessor.perform server: server, session: session, pause_pool: pause_pool
   end
 end

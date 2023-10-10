@@ -40,28 +40,9 @@ class SOCKS::PausePool
         @connectionIdentifiers.delete connection_identifier
         entries.delete connection_identifier
 
-        transfer_destination_reset_socket entry: entry
-        entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
+        entry.destination.close rescue nil
       end
     end
-  end
-
-  private def transfer_destination_reset_socket(entry : Entry) : Bool
-    transfer_destination_reset_socket transfer: entry.transfer
-  end
-
-  private def transfer_destination_reset_socket(transfer : Transfer) : Bool
-    transfer_destination = transfer.destination
-    return false unless transfer_destination.is_a? Client
-
-    transfer_destination_reset_socket client: transfer_destination
-  end
-
-  private def transfer_destination_reset_socket(client : Client) : Bool
-    client.close rescue nil
-    client.reset_socket
-
-    true
   end
 
   private def need_cleared?
@@ -80,8 +61,7 @@ class SOCKS::PausePool
       @connectionIdentifiers.delete connection_identifier
       entries.delete connection_identifier
 
-      transfer_destination_reset_socket entry: entry
-      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
+      entry.destination.close rescue nil
     end
 
     return unless need_cleared?
@@ -92,8 +72,7 @@ class SOCKS::PausePool
       @connectionIdentifiers.delete connection_identifier
       entries.delete connection_identifier
 
-      transfer_destination_reset_socket entry: entry
-      entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
+      entry.destination.close rescue nil
     end
 
     refresh_last_cleaned_up
@@ -107,10 +86,9 @@ class SOCKS::PausePool
     @mutex.synchronize { entries.size.dup }
   end
 
-  def set(connection_identifier : UUID, value : Transfer, state : Enhanced::State::WebSocket) : Bool
+  def set(connection_identifier : UUID, destination : IO, state : Enhanced::State::WebSocket) : Bool
     if capacity.zero?
-      transfer_destination_reset_socket transfer: value
-      value.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
+      destination.close rescue nil
 
       return false
     end
@@ -119,11 +97,10 @@ class SOCKS::PausePool
       inactive_entry_cleanup
 
       entries[connection_identifier]?.try do |_entry|
-        transfer_destination_reset_socket entry: _entry
-        _entry.transfer.cleanup sd_flag: Transfer::SDFlag::DESTINATION, reset: true
+        _entry.destination.close rescue nil
       end
 
-      entries[connection_identifier] = Entry.new transfer: value, state: state
+      entries[connection_identifier] = Entry.new destination: destination, state: state
     end
 
     true
@@ -145,11 +122,11 @@ class SOCKS::PausePool
   end
 
   struct Entry
-    getter transfer : Transfer
+    getter destination : IO
     getter state : Enhanced::State::WebSocket
     getter createdAt : Time
 
-    def initialize(@transfer : Transfer, @state : Enhanced::State::WebSocket)
+    def initialize(@destination : IO, @state : Enhanced::State::WebSocket)
       @createdAt = Time.local
     end
 

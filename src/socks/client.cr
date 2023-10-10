@@ -1,13 +1,12 @@
 class SOCKS::Client < IO
-  getter outbound : IO
-  getter dnsResolver : DNS::Resolver
+  property outbound : IO
   getter options : Options
-  property holding : IO?
-  property exchangeFrames : Set(Frames)
+  property udpForwarder : Layer::AssociateUDP?
+  property tcpForwarder : Layer::TCPBinding?
 
-  def initialize(@outbound : IO, @dnsResolver : DNS::Resolver, @options : Options)
-    @holding = nil
-    @exchangeFrames = Set(Frames).new
+  def initialize(@outbound : IO, @options : Options)
+    @udpForwarder = nil
+    @tcpForwarder = nil
   end
 
   def self.new(host : String, port : Int32, dns_resolver : DNS::Resolver, options : Options, timeout : TimeOut = TimeOut.new)
@@ -16,16 +15,16 @@ class SOCKS::Client < IO
     socket.read_timeout = timeout.read
     socket.write_timeout = timeout.write
 
-    new outbound: socket, dnsResolver: dns_resolver, options: options
+    new outbound: socket, options: options
   end
 
-  def self.new(ip_address : Socket::IPAddress, dns_resolver : DNS::Resolver, options : Options, timeout : TimeOut = TimeOut.new)
+  def self.new(ip_address : Socket::IPAddress, options : Options, timeout : TimeOut = TimeOut.new)
     socket = TCPSocket.new ip_address: ip_address, connect_timeout: timeout.connect
 
     socket.read_timeout = timeout.read
     socket.write_timeout = timeout.write
 
-    new outbound: socket, dnsResolver: dns_resolver, options: options
+    new outbound: socket, options: options
   end
 
   def version=(value : Frames::VersionFlag)
@@ -60,64 +59,20 @@ class SOCKS::Client < IO
     @authenticationMethods ||= Set{Frames::AuthenticationFlag::NoAuthentication}
   end
 
-  def wrapper_authorization=(value : Frames::WebSocketAuthorizationFlag)
-    @wrapperAuthorization = value
+  def wrapper=(value : Options::Client::Wrapper)
+    @wrapper = value
   end
 
-  def wrapper_authorization
-    @wrapperAuthorization
+  def wrapper
+    @wrapper
   end
 
-  def wrapper_authorize_frame=(value : Frames::Authorize)
-    @wrapperAuthorizeFrame = value
+  def wrapper_authorize=(value : Frames::Authorize)
+    @wrapperAuthorize = value
   end
 
-  def wrapper_authorize_frame
-    @wrapperAuthorizeFrame
-  end
-
-  def read_timeout=(value : Int | Time::Span | Nil)
-    _io = outbound
-    _io.read_timeout = value if value if _io.responds_to? :read_timeout=
-  end
-
-  def read_timeout
-    _io = outbound
-    _io.read_timeout if _io.responds_to? :read_timeout
-  end
-
-  def write_timeout=(value : Int | Time::Span | Nil)
-    _io = outbound
-    _io.write_timeout = value if value if _io.responds_to? :write_timeout=
-  end
-
-  def write_timeout
-    _io = outbound
-    _io.write_timeout if _io.responds_to? :write_timeout
-  end
-
-  def tcp_binding_timeout=(value : TimeOut)
-    @tcpBindingTimeout = value
-  end
-
-  def tcp_binding_timeout
-    @tcpBindingTimeout ||= TimeOut.new
-  end
-
-  def associate_udp_timeout=(value : TimeOut)
-    @associateUDPTimeOut = value
-  end
-
-  def associate_udp_timeout
-    @associateUDPTimeOut ||= TimeOut.udp_default
-  end
-
-  def outbound : IO
-    @outbound
-  end
-
-  def holding : IO?
-    @holding
+  def wrapper_authorize
+    @wrapperAuthorize
   end
 
   def connection_identifier=(value : UUID)
@@ -136,66 +91,106 @@ class SOCKS::Client < IO
     @connectionPausePending
   end
 
-  def local_address : Socket::Address?
-    _io = outbound
-    _io.responds_to?(:local_address) ? _io.local_address : nil
+  def tcp_forwarder : Layer::TCPBinding?
+    @tcpForwarder
   end
 
-  def remote_address : Socket::Address?
-    _io = outbound
-    _io.responds_to?(:remote_address) ? _io.remote_address : nil
+  def udp_forwarder : Layer::AssociateUDP?
+    @udpForwarder
+  end
+
+  def last_alive_time : Int64?
+    udp_last_alive_time = @udpForwarder.try &.last_alive_time
+    tcp_last_alive_time = @tcpForwarder.try &.last_alive_time
+
+    udp_last_alive_time || tcp_last_alive_time
+  end
+
+  def __transfer_before_call : Bool
+    buffer = uninitialized UInt8[1_i32]
+    forwarder = @udpForwarder || @tcpForwarder rescue nil
+
+    case forwarder
+    in Layer::AssociateUDP, Layer::TCPBinding
+      forwarder.read slice: buffer.to_slice
+    in IO
+    in Nil
+    end
+
+    true
+  end
+
+  def __transfer_extra_sent_bytes : UInt64
+    forwarder = @udpForwarder || @tcpForwarder rescue nil
+
+    case forwarder
+    in Layer::AssociateUDP, Layer::TCPBinding
+      return forwarder.sentBytes.get
+    in IO
+    in Nil
+    end
+
+    0_u64
+  end
+
+  def __transfer_extra_received_bytes : UInt64
+    forwarder = @udpForwarder || @tcpForwarder rescue nil
+
+    case forwarder
+    in Layer::AssociateUDP, Layer::TCPBinding
+      return forwarder.receivedBytes.get
+    in IO
+    in Nil
+    end
+
+    0_u64
   end
 
   def read(slice : Bytes) : Int32
     return 0_i32 if slice.empty?
-    outbound.read slice
+    @outbound.read slice: slice
   end
 
   def write(slice : Bytes) : Nil
     return if slice.empty?
-    outbound.write slice
+    @outbound.write slice: slice
   end
 
   def flush
-    outbound.flush
+    @outbound.flush
   end
 
   def close
-    outbound.close rescue nil
-    holding.try &.close rescue nil
+    @outbound.close rescue nil
+    close_forwarder reset: true
+
+    true
+  end
+
+  def close_forwarder(reset : Bool = true)
+    @udpForwarder.try &.close rescue nil
+    @tcpForwarder.try &.close rescue nil
+
+    if reset
+      @udpForwarder = nil
+      @tcpForwarder = nil
+    end
   end
 
   def closed?
-    outbound.closed?
-  end
-
-  def reset_socket : Bool
-    closed_memory = IO::Memory.new 0_i32
-    closed_memory.close
-
-    @outbound = closed_memory
-    @holding = nil
-
-    true
+    @outbound.closed?
   end
 
   def notify_peer_incoming
-    _outbound = outbound
-    _holding = holding
+    _outbound = @outbound
+    return unless _outbound.is_a? Enhanced::WebSocket
 
-    _outbound.notify_peer_incoming if _outbound.is_a? Enhanced::WebSocket
-    _holding.notify_peer_incoming if _holding.is_a? Enhanced::WebSocket
-
+    _outbound.notify_peer_incoming
     true
   end
 
-  def update_receive_rescue_buffer(slice : Bytes)
-    _outbound = outbound
-    _outbound.update_receive_rescue_buffer slice: slice if _outbound.responds_to? :update_receive_rescue_buffer
-  end
-
   def process_upgrade!(state : SOCKS::Enhanced::State? = nil)
-    case _wrapper = options.client.wrapper
+    case _wrapper = @wrapper
     in SOCKS::Options::Client::Wrapper::WebSocket
       upgrade_websocket! wrapper: _wrapper, state: state
     in SOCKS::Options::Client::Wrapper
@@ -206,25 +201,20 @@ class SOCKS::Client < IO
   private def upgrade_websocket!(wrapper : SOCKS::Options::Client::Wrapper::WebSocket, state : SOCKS::Enhanced::State?)
     headers = wrapper.headers.dup
 
-    case _wrapper_authorization = wrapper_authorization
-    in Frames::WebSocketAuthorizationFlag
-      case _wrapper_authorization
+    if _wrapper_authorize = wrapper_authorize
+      case _wrapper_authorize.authorizationType
       in .basic?
-        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthorizeFrame is Nil!" } unless _wrapper_authorize_frame = wrapper_authorize_frame
-        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthorizeFrame.userName is Nil!" } unless _wrapper_authorize_frame_user_name = _wrapper_authorize_frame.userName
-        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthorizeFrame.password is Nil!" } unless _wrapper_authorize_frame_password = _wrapper_authorize_frame.password
+        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthorizeFrame.userName is Nil!" } unless _wrapper_authorize_user_name = _wrapper_authorize.userName
+        raise Exception.new String.build { |io| io << "Client.upgrade_websocket!: Client.wrapperAuthorizeFrame.password is Nil!" } unless _wrapper_authorize_password = _wrapper_authorize.password
 
-        headers["Authorization"] = String.build { |io| io << "Basic" << ' ' << Base64.strict_encode(String.build { |_io| _io << _wrapper_authorize_frame_user_name << ':' << _wrapper_authorize_frame_password }) }
+        headers["Authorization"] = String.build { |io| io << "Basic" << ' ' << Base64.strict_encode(String.build { |_io| _io << _wrapper_authorize_user_name << ':' << _wrapper_authorize_password }) }
       end
-    in Nil
     end
 
     process_websocket_request wrapper: wrapper, headers: headers
-    response, protocol = HTTP::WebSocket.handshake socket: outbound, host: wrapper.address.host, port: wrapper.address.port, resource: wrapper.resource, headers: headers, data_raw: wrapper.dataRaw
+    response, protocol = HTTP::WebSocket.handshake socket: @outbound, host: wrapper.address.host, port: wrapper.address.port, resource: wrapper.resource, headers: headers, data_raw: wrapper.dataRaw
     @outbound = _outbound = Enhanced::WebSocket.new io: protocol, options: options, state: (state || SOCKS::Enhanced::State::WebSocket.new)
     process_websocket_response wrapper: wrapper, response: response, outbound: _outbound
-
-    @outbound = _outbound
   end
 
   private def process_websocket_request(wrapper : SOCKS::Options::Client::Wrapper::WebSocket, headers : HTTP::Headers) : Bool
@@ -360,33 +350,20 @@ class SOCKS::Client < IO
     true
   end
 
-  def notify_peer_negotiate(source : IO, command_flag : SOCKS::Enhanced::CommandFlag = SOCKS::Enhanced::CommandFlag::CONNECTION_REUSE) : SOCKS::Enhanced::CommandFlag?
-    _outbound = outbound
-    _holding = holding
+  def notify_peer_negotiate(source : IO, command_flag : SOCKS::Enhanced::CommandFlag? = nil) : SOCKS::Enhanced::CommandFlag?
+    close_forwarder reset: true
+    return unless command_flag
 
-    if _outbound.is_a? Enhanced::WebSocket
-      _outbound.notify_peer_negotiate command_flag: command_flag
-      _outbound.process_negotiate source: source
+    _outbound = @outbound
+    return unless _outbound.is_a? Enhanced::WebSocket
 
-      raise Exception.new String.build { |io| io << "SOCKS::Client.notify_peer_negotiate: outbound.final_command_flag? is Nil!" } unless final_command_flag = _outbound.final_command_flag?
-      _outbound.reset_settings command_flag: final_command_flag
+    _outbound.notify_peer_negotiate command_flag: command_flag
+    _outbound.process_negotiate source: source
 
-      return final_command_flag
-    end
+    raise Exception.new String.build { |io| io << "SOCKS::Client.notify_peer_negotiate: outbound.final_command_flag? is Nil!" } unless final_command_flag = _outbound.final_command_flag?
+    _outbound.reset_settings command_flag: final_command_flag
 
-    if _holding.is_a? Enhanced::WebSocket
-      outbound.close rescue nil
-      _holding.notify_peer_negotiate command_flag: command_flag
-      _holding.process_negotiate source: source
-
-      raise Exception.new String.build { |io| io << "SOCKS::Client.notify_peer_negotiate: holding.final_command_flag? is Nil!" } unless final_command_flag = _holding.final_command_flag?
-      _holding.reset_settings command_flag: final_command_flag
-
-      @outbound = _holding
-      @holding = nil
-
-      return final_command_flag
-    end
+    final_command_flag
   end
 
   def handshake! : Bool
@@ -411,13 +388,11 @@ class SOCKS::Client < IO
       end
     end
 
-    frame_negotiate.to_io io: outbound
-    exchangeFrames << frame_negotiate
+    frame_negotiate.to_io io: @outbound
 
     # Receive Negotiate Reply.
 
-    from_negotiate = Frames::Negotiate.from_io io: outbound, ar_type: ARType::Reply, version_flag: version
-    exchangeFrames << from_negotiate
+    from_negotiate = Frames::Negotiate.from_io io: @outbound, ar_type: ARType::Reply, version_flag: version
     raise Exception.new "Client.handshake!: Negotiate.acceptedMethod cannot be Nil!" unless accepted_method = from_negotiate.acceptedMethod
 
     unless authentication_methods.includes? accepted_method
@@ -438,10 +413,8 @@ class SOCKS::Client < IO
       if (1_i32 < uniq_authentication_methods.size) || from_negotiate.authenticateFrame.nil?
         raise Exception.new "Client.handshake!: Your authenticationMethods is UserNamePassword, but you did not provide Authenticate Frame." unless _authenticate_frame = authenticate_frame
 
-        exchangeFrames << _authenticate_frame
-        _authenticate_frame.to_io io: outbound
-        from_negotiate.authenticateFrame = from_authenticate = Frames::Authenticate.from_io io: outbound, ar_type: ARType::Reply, version_flag: version
-        exchangeFrames << from_authenticate
+        _authenticate_frame.to_io io: @outbound
+        from_negotiate.authenticateFrame = from_authenticate = Frames::Authenticate.from_io io: @outbound, ar_type: ARType::Reply, version_flag: version
       end
     when .no_authentication?
     else
@@ -461,16 +434,17 @@ class SOCKS::Client < IO
     true
   end
 
-  def establish!(command_type : Frames::CommandFlag, host : String, port : Int32, remote_dns_resolution : Bool = true)
+  def establish!(dns_resolver : DNS::Resolver, command_flag : Frames::CommandFlag, host : String, port : Int32, remote_dns_resolution : Bool = true)
     destination_address = Address.new host: host, port: port
-    establish! command_type: command_type, destination_address: destination_address, remote_dns_resolution: remote_dns_resolution
+    establish! dns_resolver: dns_resolver, command_flag: command_flag, destination_address: destination_address, remote_dns_resolution: remote_dns_resolution
   end
 
-  def establish!(command_type : Frames::CommandFlag, destination_address : Socket::IPAddress | Address, remote_dns_resolution : Bool = true)
+  def establish!(dns_resolver : DNS::Resolver, command_flag : Frames::CommandFlag, destination_address : Socket::IPAddress | Address, remote_dns_resolution : Bool = true) : Frames::Establish?
     # Check Options::Switcher.
 
-    raise Exception.new "Client.establish!: command_type is TCPBinding, but Switcher.allowTCPBinding is false." if command_type.tcp_binding? && !options.switcher.allowTCPBinding
-    raise Exception.new "Client.establish!: command_type is AssociateUDP, but Switcher.allowAssociateUDP is false." if command_type.associate_udp? && !options.switcher.allowAssociateUDP
+    raise Exception.new "Client.establish!: command_flag is TCPBinding, but Switcher.allowTCPBinding is false." if command_flag.tcp_binding? && !options.switcher.allowTCPBinding
+    raise Exception.new "Client.establish!: command_flag is AssociateUDP, but Switcher.allowAssociateUDP is false." if command_flag.associate_udp? && !options.switcher.allowAssociateUDP
+    raise Exception.new "Client.establish!: command_flag is EnhancedAssociateUDP, but Switcher.allowEnhancedAssociateUDP is false." if command_flag.enhanced_associate_udp? && !options.switcher.allowEnhancedAssociateUDP
 
     case destination_address
     in Socket::IPAddress
@@ -479,21 +453,11 @@ class SOCKS::Client < IO
     end
 
     frame_establish = Frames::Establish.new version: version, arType: ARType::Ask
-    frame_establish.commandType = command_type
-
-    unless remote_dns_resolution
-      case destination_address
-      in Socket::IPAddress
-      in Address
-        delegator, fetch_type, ip_addresses = dnsResolver.getaddrinfo host: destination_address.host, port: destination_address.port
-
-        raise Exception.new String.build { |io| io << "Client.establish!: Unfortunately, DNS::Resolver.getaddrinfo! The host: (" << destination_address.host << ") & fetchType: (" << fetch_type << ")" << " IPAddress result is empty!" } if ip_addresses.empty?
-        destination_address = ip_addresses.first
-      end
-    end
+    frame_establish.commandType = command_flag
 
     case destination_address
     in Socket::IPAddress
+      frame_establish.destinationAddress = nil
       frame_establish.destinationIpAddress = destination_address
 
       case destination_address.family
@@ -503,71 +467,53 @@ class SOCKS::Client < IO
         frame_establish.addressType = Frames::AddressFlag::Ipv4
       end
     in Address
-      frame_establish.destinationAddress = destination_address
-      frame_establish.addressType = Frames::AddressFlag::Domain
+      if remote_dns_resolution || (command_flag.tcp_binding? || command_flag.associate_udp? || command_flag.enhanced_associate_udp?)
+        frame_establish.destinationAddress = destination_address
+        frame_establish.addressType = Frames::AddressFlag::Domain
+      else
+        delegator, fetch_type, ip_addresses = dns_resolver.getaddrinfo host: destination_address.host, port: destination_address.port
+        raise Exception.new String.build { |io| io << "Client.establish!: Unfortunately, DNS::Resolver.getaddrinfo! The host: (" << destination_address.host << ") & fetchType: (" << fetch_type << ")" << " IPAddress result is empty!" } if ip_addresses.empty?
+
+        first_ip_address = ip_addresses.first
+        frame_establish.destinationAddress = nil
+        frame_establish.destinationIpAddress = first_ip_address
+        frame_establish.addressType = first_ip_address.family.inet? ? Frames::AddressFlag::Ipv4 : Frames::AddressFlag::Ipv6
+      end
     end
 
-    # Send Establish Ask.
+    # Send Establish Ask & Receive Establish Reply.
 
-    frame_establish.to_io io: outbound
-    exchangeFrames << frame_establish
+    frame_establish.to_io io: @outbound
+    from_establish = Frames::Establish.from_io io: @outbound, ar_type: ARType::Reply, version_flag: version, command_flag: command_flag
 
-    # Create Bind Socket.
-
-    from_establish = Frames::Establish.from_io io: outbound, ar_type: ARType::Reply, version_flag: version
-    exchangeFrames << from_establish
-
-    raise Exception.new "Client.connect!: Establish.destinationAddress or destinationIpAddress cannot be Nil!" unless from_establish_destination_address = from_establish.get_destination_address
     raise Exception.new "Client.connect!: Establish.statusType cannot be Nil!" unless status_type = from_establish.statusType
     raise Exception.new String.build { |io| io << "Received from IO to failure status (" << status_type.to_s << ")." } unless status_type.indicates_success?
 
-    case command_type
+    from_establish
+  end
+
+  def resynchronize(command_flag : Frames::CommandFlag) : Frames::Establish?
+    case command_flag
     in .tcp_connection?
     in .tcp_binding?
-      bind_outbound_socket = SOCKS.create_outbound_socket command_type: command_type, destination_address: from_establish_destination_address,
-        dns_resolver: dnsResolver, tcp_timeout: tcp_binding_timeout, udp_timeout: associate_udp_timeout
+      # Be sure to connect the Frames::Establish.destinationIpAddress (Bind) first, Then call Client.resynchronize.
 
-      _outbound = outbound
-      @outbound = bind_outbound_socket
-      @holding = _outbound
+      incoming_establish = Frames::Establish.from_io io: @outbound, ar_type: ARType::Reply, version_flag: version, command_flag: command_flag
     in .associate_udp?
-      bind_outbound_socket = SOCKS.create_outbound_socket command_type: command_type, destination_address: from_establish_destination_address,
-        dns_resolver: dnsResolver, tcp_timeout: tcp_binding_timeout, udp_timeout: tcp_binding_timeout
+    in .enhanced_associate_udp?
+    end
 
-      unless bind_outbound_socket.is_a? UDPSocket
-        bind_outbound_socket.close rescue nil
-        raise Exception.new "Client.establish!: SOCKS.create_outbound_socket type is not UDPSocket!"
+    @outbound.try do |_outbound|
+      if _outbound.is_a? Enhanced::WebSocket
+        _outbound.resynchronize
+        _outbound.transporting = true
       end
-
-      associate_udp = Layer::Client::AssociateUDP.new io: bind_outbound_socket, addressType: frame_establish.addressType
-
-      case destination_address
-      in Socket::IPAddress
-        associate_udp.destinationIpAddress = destination_address
-      in Address
-        associate_udp.destinationAddress = destination_address
-      end
-
-      _outbound = outbound
-      @outbound = associate_udp
-      @holding = _outbound
     end
 
-    _outbound = outbound
-    _holding = holding
-
-    if _outbound.is_a? Enhanced::WebSocket
-      _outbound.resynchronize
-      _outbound.transporting = true
-    end
-
-    if _holding.is_a? Enhanced::WebSocket
-      _holding.resynchronize
-      _holding.transporting = true
-    end
+    incoming_establish
   end
 end
 
 require "uuid"
-require "./layer/client/*"
+require "./layer/*"
 require "./enhanced/*"

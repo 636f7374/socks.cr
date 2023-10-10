@@ -10,8 +10,10 @@ struct SOCKS::Options
   struct Switcher
     property allowTCPBinding : Bool
     property allowAssociateUDP : Bool
+    property allowEnhancedAssociateUDP : Bool
+    property enhancedAssociateUDPFirst : Bool
 
-    def initialize(@allowTCPBinding : Bool = true, @allowAssociateUDP : Bool = true)
+    def initialize(@allowTCPBinding : Bool = true, @allowAssociateUDP : Bool = true, @allowEnhancedAssociateUDP : Bool = true, @enhancedAssociateUDPFirst : Bool = true)
     end
   end
 
@@ -61,8 +63,11 @@ struct SOCKS::Options
   struct Server
     property pausePool : PausePool
     property wrapper : Wrapper?
+    property tcpBinding : TcpBinding?
+    property udpRelay : UdpRelay?
+    property udpGateway : UdpGateway?
 
-    def initialize(@pausePool : PausePool = PausePool.new, @wrapper : Wrapper? = nil)
+    def initialize(@pausePool : PausePool = PausePool.new, @wrapper : Wrapper? = nil, @tcpBinding : TcpBinding? = nil, @udpRelay : UdpRelay? = nil, @udpGateway : UdpGateway? = nil)
     end
 
     struct PausePool
@@ -86,6 +91,31 @@ struct SOCKS::Options
 
         def initialize(@enableConnectionIdentifier : Bool = true, @allowConnectionPause : Bool = true, @allowConnectionReuse : Bool = true, @maximumSentSequence : Int8 = Int8::MAX, @maximumReceiveSequence : Int8 = Int8::MAX)
         end
+      end
+    end
+
+    struct TcpBinding
+      property externalIpv4Address : Socket::IPAddress?
+      property externalIpv6Address : Socket::IPAddress?
+
+      def initialize(@externalIpv4Address : Socket::IPAddress? = nil, @externalIpv6Address : Socket::IPAddress? = nil)
+      end
+    end
+
+    struct UdpRelay
+      property externalIpv4Address : Socket::IPAddress?
+      property externalIpv6Address : Socket::IPAddress?
+
+      def initialize(@externalIpv4Address : Socket::IPAddress? = nil, @externalIpv6Address : Socket::IPAddress? = nil)
+      end
+    end
+
+    struct UdpGateway
+      property externalIpv4Address : Socket::IPAddress?
+      property externalIpv6Address : Socket::IPAddress?
+      property listenPort : Int32
+
+      def initialize(@externalIpv4Address : Socket::IPAddress? = nil, @externalIpv6Address : Socket::IPAddress? = nil, @listenPort : Int32 = 0_i32)
       end
     end
   end

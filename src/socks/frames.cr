@@ -31,9 +31,10 @@ abstract struct SOCKS::Frames
   end
 
   enum CommandFlag : UInt8
-    TCPConnection = 1_u8
-    TCPBinding    = 2_u8
-    AssociateUDP  = 3_u8
+    TCPConnection        = 1_u8
+    TCPBinding           = 2_u8
+    AssociateUDP         = 3_u8
+    EnhancedAssociateUDP = 4_u8
   end
 
   enum StatusFlag : UInt8
@@ -71,6 +72,16 @@ abstract struct SOCKS::Frames
     WebSocket = 1_u8
   end
 
+  enum Ip46Flag : UInt8
+    Ipv4 = 0_u8
+    Ipv6 = 1_u8
+  end
+
+  enum ModifiedIp46Flag : UInt8
+    Ipv4 = 254_u8
+    Ipv6 = 255_u8
+  end
+
   def self.encode_sec_websocket_protocol_authorization(user_name : String, password : String) : String
     authorization = String.build { |_io| _io << user_name << ':' << password }
     encode_sec_websocket_protocol_authorization value: authorization
@@ -95,10 +106,10 @@ abstract struct SOCKS::Frames
 
     if read_length.zero?
       message = String.build { |io| io << "Failed to read " << {{name.id.stringify}} << " size, read_length is zero!" }
-      raise exception || Exception.new message
+      raise exception || Exception.new message: message
     end
 
-    buffer.to_slice[0_i32]
+    buffer.to_slice[0_u8].dup
   end
   {% end %}
 
@@ -111,7 +122,7 @@ abstract struct SOCKS::Frames
         io << "does not match the expected version (" << io_version_flag.to_s << ")."
       end
 
-      raise Exception.new message
+      raise Exception.new message: message
     end
 
     io_version_flag
@@ -125,21 +136,21 @@ abstract struct SOCKS::Frames
       io << "does not match the expected version (" << version_flag.to_s << ")."
     end
 
-    raise Exception.new message
+    raise Exception.new message: message
   end
 
   def self.read_ip_address!(io : IO, address_flag : AddressFlag) : Socket::IPAddress
     case address_flag
     when .ipv6?
-      ip_address = Socket::IPAddress.from_io io: io, family: Socket::Family::INET6
-      port = io.read_bytes UInt16, IO::ByteFormat::BigEndian
+      ipv6_buffer = uninitialized UInt8[18_i32]
+      io.read slice: ipv6_buffer.to_slice
 
-      Socket::IPAddress.new ip_address.address, port.to_i32
+      Socket::IPAddress.parse slice: ipv6_buffer.to_slice, family: Socket::Family::INET6, with_port: true
     when .ipv4?
-      ip_address = Socket::IPAddress.from_io io: io, family: Socket::Family::INET
-      port = io.read_bytes UInt16, IO::ByteFormat::BigEndian
+      ipv4_buffer = uninitialized UInt8[6_i32]
+      io.read slice: ipv4_buffer.to_slice
 
-      Socket::IPAddress.new ip_address.address, port.to_i32
+      Socket::IPAddress.parse slice: ipv4_buffer.to_slice, family: Socket::Family::INET, with_port: true
     else
       raise Exception.new "Invalid AddressFlag, Frames.read_ip_address! failed!"
     end
@@ -147,24 +158,23 @@ abstract struct SOCKS::Frames
 
   def self.read_domain!(io : IO) : Address
     buffer = uninitialized UInt8[1_i32]
-    read_length = io.read buffer.to_slice
+    read_length = io.read slice: buffer.to_slice
 
     if read_length.zero?
       message = String.build { |io| io << "Frames.read_domain!: Failed to read domain, read_length is zero!" }
-      raise Exception.new message
+      raise Exception.new message: message
     end
 
-    next_read_length = buffer.to_slice[0_i32]
-    memory = IO::Memory.new next_read_length
-    copy_length = IO.copy io, memory, next_read_length
+    temporary_slice = Bytes.new size: buffer.to_slice[0_i32]
+    value_length = io.read slice: temporary_slice
 
-    if copy_length.zero?
+    if value_length.zero?
       message = String.build { |io| io << "Frames.read_domain!: Failed to read host, copy_length is zero!" }
-      raise Exception.new message
+      raise Exception.new message: message
     end
 
-    host = String.new memory.to_slice[0_i32, copy_length]
-    port = io.read_bytes UInt16, IO::ByteFormat::BigEndian
+    host = String.new temporary_slice
+    port = io.read_bytes type: UInt16, format: IO::ByteFormat::BigEndian
 
     Address.new host, port.to_i32
   end
@@ -191,44 +201,42 @@ abstract struct SOCKS::Frames
   {% for name in ["username", "password"] %}
   def self.read_{{name.id}}!(io : IO) : String
     buffer = uninitialized UInt8[1_i32]
-    read_length = io.read buffer.to_slice
+    read_length = io.read slice: buffer.to_slice
 
     if read_length.zero?
       message = String.build { |io| io << "Failed to read " << {{name.id.stringify}} << ", read_length is zero!" } 
-      raise Exception.new message
+      raise Exception.new message: message
     end
 
-    next_read_length = buffer.to_slice[0_i32]
+    temporary_slice = Bytes.new size: buffer.to_slice[0_i32]
+    value_length = io.read slice: temporary_slice
 
-    if next_read_length.zero?
-      message = String.build { |io| io << "Failed to read " << {{name.id.stringify}} << ", next_read_length is zero!" } 
-      raise Exception.new message
+    if value_length.zero?
+      message = String.build { |io| io << "Failed to read " << {{name.id.stringify}} << ", value_length is zero!" } 
+      raise Exception.new message: message
     end
 
-    memory = IO::Memory.new next_read_length
-    IO.copy io, memory, next_read_length
-
-    String.new memory.to_slice
+    String.new temporary_slice
   end
   {% end %}
 
-  {% for name in ["version", "command", "reserved", "address", "authentication", "authentication_choice", "permission", "status"] %}
+  {% for name in ["version", "command", "reserved", "address", "authentication", "authentication_choice", "permission", "status", "ip46", "modified_ip46"] %}
   def self.read_{{name.id}}!(io : IO) : {{name.camelcase.id}}Flag
     buffer = uninitialized UInt8[1_i32]
-    read_length = io.read buffer.to_slice
+    read_length = io.read slice: buffer.to_slice
 
     if read_length.zero?
       message = String.build { |io| io << "Failed to read " << {{name.id.stringify}} << ", read_length is zero!" } 
-      raise Exception.new message
+      raise Exception.new message: message
     end
 
-    unless value = {{name.camelcase.id}}Flag.from_value? buffer.to_slice[0_i32].to_i32
+    unless value = {{name.camelcase.id}}Flag.from_value? value: buffer.to_slice[0_i32].to_i32
       message = String.build do |io| 
         io << "Failed to read " << {{name.id.stringify}} << ", " << "value does not exist in Frames::" 
         io << {{name.camelcase.id.stringify}} << "Flag Enum!"
       end
 
-      raise Exception.new message
+      raise Exception.new message: message
     end
 
     value

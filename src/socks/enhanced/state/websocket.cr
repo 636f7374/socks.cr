@@ -11,7 +11,6 @@ module SOCKS::Enhanced
       getter receiveRound : Atomic(UInt64)
       getter sentBufferSet : Set(Bytes)
       getter receiveBuffer : IO::Memory
-      getter receiveRescueBuffer : IO::Memory
       getter synchronizing : Atomic(Int8)
       getter reading : Atomic(Int8)
       getter writing : Atomic(Int8)
@@ -39,7 +38,6 @@ module SOCKS::Enhanced
         @receiveRound = Atomic(UInt64).new 0_u64
         @sentBufferSet = Set(Bytes).new
         @receiveBuffer = IO::Memory.new
-        @receiveRescueBuffer = IO::Memory.new
         @synchronizing = Atomic(Int8).new -1_i8
         @reading = Atomic(Int8).new -1_i8
         @writing = Atomic(Int8).new -1_i8
@@ -95,10 +93,6 @@ module SOCKS::Enhanced
 
       def allow_connection_pause? : Bool
         @allowConnectionPause.get.zero?
-      end
-
-      def receive_buffer_end_of_reached? : Bool
-        @receiveMutex.synchronize { (receiveBuffer.pos == receiveBuffer.size) || receiveBuffer.size.zero? }
       end
 
       def receive_end_of_reached? : Bool
@@ -214,7 +208,6 @@ module SOCKS::Enhanced
             @receiveRound.set 0_u64
             @sentBufferSet.clear
             @receiveBuffer.clear
-            @receiveRescueBuffer.clear
           end
 
           @synchronizing.set -1_i8
@@ -249,74 +242,85 @@ module SOCKS::Enhanced
       end
 
       {% for name in ["state", "command", "queue"] %}
-      protected def parse_{{name.id}}_flag?(memory_slice : IO::Memory) : {{name.capitalize.id}}Flag?
-        return if memory_slice.empty?
+      protected def parse_{{name.id}}_flag?(slice : Bytes) : {{name.capitalize.id}}Flag?
+        return if slice.empty?
 
-        {{name.id}}_flag_value = memory_slice.read_bytes UInt8, IO::ByteFormat::BigEndian
+        {{name.id}}_flag_value = IO::ByteFormat::BigEndian.decode int: UInt8, bytes: slice[0_u8, 1_u8]
         {{name.capitalize.id}}Flag.from_value {{name.id}}_flag_value rescue nil
       end
       {% end %}
 
-      protected def parse_unix_ms?(memory_slice : IO::Memory) : Int64?
-        return if memory_slice.empty?
-        memory_slice.read_bytes Int64, IO::ByteFormat::BigEndian rescue nil
+      protected def parse_unix_ms?(slice : Bytes) : Int64?
+        return if slice.empty?
+        IO::ByteFormat::BigEndian.decode int: Int64, bytes: slice[0_u8..7_u8]
       end
 
-      protected def parse_resynchronize_frame(memory_slice : IO::Memory) : Tuple(Int8, Int8, UInt64)
-        peer_sent_sequence = memory_slice.read_bytes Int8, IO::ByteFormat::BigEndian
-        peer_receive_sequence = memory_slice.read_bytes Int8, IO::ByteFormat::BigEndian
-        peer_receive_round = memory_slice.read_bytes UInt64, IO::ByteFormat::BigEndian
+      protected def parse_resynchronize_frame(slice : Bytes) : Tuple(Int8, Int8, UInt64)
+        peer_sent_sequence = IO::ByteFormat::BigEndian.decode int: Int8, bytes: slice[0_u8, 1_u8]
+        peer_receive_sequence = IO::ByteFormat::BigEndian.decode int: Int8, bytes: slice[1_u8, 1_u8]
+        peer_receive_round = IO::ByteFormat::BigEndian.decode int: UInt64, bytes: slice[2_u8...]
 
         Tuple.new peer_sent_sequence, peer_receive_sequence, peer_receive_round
       end
 
-      protected def parse_sent_frame(memory_slice : IO::Memory) : Tuple(Int8, Int32)
-        sent_sequence = memory_slice.read_bytes Int8, IO::ByteFormat::BigEndian
-        size = memory_slice.read_bytes Int32, IO::ByteFormat::BigEndian
+      protected def parse_sent_frame(slice : Bytes) : Tuple(Int8, Int32)
+        sent_sequence = IO::ByteFormat::BigEndian.decode int: Int8, bytes: slice[0_u8, 1_u8]
+        size = IO::ByteFormat::BigEndian.decode int: Int32, bytes: slice[1_u8..4_u8]
 
         Tuple.new sent_sequence, size
       end
 
       protected def create_sent_frame(slice : Bytes, sent_sequence : Int8) : Bytes
-        temporary = IO::Memory.new
-        temporary.write_bytes StateFlag::SENT.value, IO::ByteFormat::BigEndian
-        temporary.write_bytes sent_sequence, IO::ByteFormat::BigEndian
-        temporary.write_bytes slice.size, IO::ByteFormat::BigEndian
-        temporary.write slice
-        temporary.to_slice
+        # 6 Bytes: (StateFlag [UInt8 / 1 Bytes], sent_sequence [UInt8 / 1 Bytes], slice.size [Int32 / 4 Bytes])
+
+        temporary_slice = Bytes.new size: slice.size + 6_i32
+        IO::ByteFormat::BigEndian.encode int: StateFlag::SENT.value, bytes: temporary_slice[0_u8, 1_u8]
+        IO::ByteFormat::BigEndian.encode int: sent_sequence, bytes: temporary_slice[1_u8, 1_u8]
+        IO::ByteFormat::BigEndian.encode int: slice.size, bytes: temporary_slice[2_u8..5_u8]
+        temporary_slice[6_u8...].copy_from source: slice
+
+        temporary_slice
       end
 
       private def create_resynchronize_frame(sent_sequence : Int8, receive_sequence : Int8, receive_round : UInt64) : Bytes
-        temporary = IO::Memory.new capacity: 11_i32
-        temporary.write_bytes StateFlag::RESYNCHRONIZE.value, IO::ByteFormat::BigEndian
-        temporary.write_bytes sent_sequence, IO::ByteFormat::BigEndian
-        temporary.write_bytes receive_sequence, IO::ByteFormat::BigEndian
-        temporary.write_bytes receive_round, IO::ByteFormat::BigEndian
-        temporary.to_slice
+        # 11 Bytes: (StateFlag [UInt8 / 1 Bytes], sent_sequence [UInt8 / 1 Bytes], receive_sequence [UInt8 / 1 Bytes], receive_round [UInt64 / 8 Bytes])
+
+        temporary_slice = Bytes.new size: 11_i32
+        IO::ByteFormat::BigEndian.encode int: StateFlag::RESYNCHRONIZE.value, bytes: temporary_slice[0_u8, 1_u8]
+        IO::ByteFormat::BigEndian.encode int: sent_sequence, bytes: temporary_slice[1_u8, 1_u8]
+        IO::ByteFormat::BigEndian.encode int: receive_sequence, bytes: temporary_slice[2_u8..3_u8]
+        IO::ByteFormat::BigEndian.encode int: receive_round, bytes: temporary_slice[3_u8...]
+
+        temporary_slice
       end
 
       {% for name in ["received_confirmed"] %}
       private def create_{{name.id}}_frame(receive_sequence : Int8) : Bytes
-        temporary = IO::Memory.new capacity: 2_i32
-        temporary.write_bytes StateFlag::{{name.upcase.id}}.value, IO::ByteFormat::BigEndian
-        temporary.write_bytes receive_sequence, IO::ByteFormat::BigEndian
-        temporary.to_slice
+        # 2 Bytes: (StateFlag [UInt8 / 1 Bytes], receive_sequence [UInt8 / 1 Bytes])
+
+        temporary_slice = Bytes.new size: 2_i32
+        IO::ByteFormat::BigEndian.encode int: StateFlag::{{name.upcase.id}}.value, bytes: temporary_slice[0_u8, 1_u8]
+        IO::ByteFormat::BigEndian.encode int: receive_sequence, bytes: temporary_slice[1_u8, 1_u8]
+
+        temporary_slice
       end
       {% end %}
 
       {% for name in ["notify_peer", "response_peer"] %}
       protected def {{name.id}}_command_negotiate(io : HTTP::WebSocket::Protocol, command_flag : CommandFlag) : Int64
+        # 10 Bytes: (StateFlag [UInt8 / 1 Bytes], command_flag [UInt8 / 1 Bytes], unix_ms [Int64 / 8 Bytes])
+
+        temporary_slice = Bytes.new size: 10_i32
         unix_ms = Time.local.to_unix_ms
 
-        memory_slice = IO::Memory.new capacity: 10_i32
-        memory_slice.write_bytes StateFlag::COMMAND.value, IO::ByteFormat::BigEndian
-        memory_slice.write_bytes command_flag.value, IO::ByteFormat::BigEndian
-        memory_slice.write_bytes unix_ms, IO::ByteFormat::BigEndian
+        IO::ByteFormat::BigEndian.encode int: StateFlag::COMMAND.value, bytes: temporary_slice[0_u8, 1_u8]
+        IO::ByteFormat::BigEndian.encode int: command_flag.value, bytes: temporary_slice[1_u8, 1_u8]
+        IO::ByteFormat::BigEndian.encode int: unix_ms, bytes: temporary_slice[2_u8...]
 
         {% if name == "notify_peer" %}
-          ping io: io, slice: memory_slice.to_slice
+          ping io: io, slice: temporary_slice
         {% else %}
-          pong io: io, slice: memory_slice.to_slice
+          pong io: io, slice: temporary_slice
         {% end %}
 
         unix_ms
@@ -328,7 +332,7 @@ module SOCKS::Enhanced
       end
 
       def notify_peer_incoming(io : HTTP::WebSocket::Protocol)
-        ping io: io, slice: Bytes[StateFlag::INCOMING.value]
+        ping io: io, slice: Bytes[StateFlag::INCOMING]
       end
 
       def process_response_pending_command_negotiate(io : HTTP::WebSocket::Protocol)
@@ -350,7 +354,7 @@ module SOCKS::Enhanced
       protected def process_receive_end_of_reached(io : HTTP::WebSocket::Protocol)
         notify_peer_receive_end_of_reached io: io
         receive_sequence_reset
-        receiveRound.add 1_u64
+        receiveRound.add value: 1_u64
       end
 
       def process_negotiate(io : HTTP::WebSocket::Protocol, source : IO) : Exception?
@@ -387,15 +391,17 @@ module SOCKS::Enhanced
 
       def process_client_side_connection_pause_pending!(io : HTTP::WebSocket::Protocol) : QueueFlag
         ping io: io, slice: nil
+
         receive_buffer = uninitialized UInt8[64_i32]
+        starting_time = Time.local
 
         loop do
-          receive = @receiveMutex.synchronize { io.receive receive_buffer.to_slice }
+          receive = @receiveMutex.synchronize { io.receive buffer: receive_buffer.to_slice }
+          return QueueFlag::REFUSED if (Time.local - starting_time) > 30_i32.seconds
 
           case receive.opcode
           when .pong?
-            memory_slice = IO::Memory.new receive_buffer.to_slice[0_i32, receive.size].dup
-            raise Exception.new "Enhanced::State::WebSocket.process_client_side_connection_pause_pending: QueueFlag.from_value is Nil!" unless queue_flag = parse_queue_flag? memory_slice: memory_slice
+            raise Exception.new "Enhanced::State::WebSocket.process_client_side_connection_pause_pending: QueueFlag.from_value is Nil!" unless queue_flag = parse_queue_flag? slice: receive_buffer.to_slice[0_i32, receive.size]
 
             case queue_flag
             in .waiting?
@@ -412,25 +418,27 @@ module SOCKS::Enhanced
 
       def process_server_side_connection_pause_pending!(io : HTTP::WebSocket::Protocol, connection_identifier : UUID, pause_pool : PausePool) : PausePool::Entry?
         receive_buffer = uninitialized UInt8[64_i32]
+        starting_time = Time.local
 
         loop do
-          receive = @receiveMutex.synchronize { io.receive receive_buffer.to_slice }
+          receive = @receiveMutex.synchronize { io.receive buffer: receive_buffer.to_slice }
+          break if (Time.local - starting_time) > 30_i32.seconds
 
           case receive.opcode
           when .ping?
             unless pause_pool.connection_identifier_includes? connection_identifier: connection_identifier
-              pong io: io, slice: Bytes[QueueFlag::REFUSED.value]
+              pong io: io, slice: Bytes[QueueFlag::REFUSED]
 
               break
             end
 
             case entry = pause_pool.get? connection_identifier: connection_identifier
             in PausePool::Entry
-              pong io: io, slice: Bytes[QueueFlag::READY.value]
+              pong io: io, slice: Bytes[QueueFlag::READY]
 
               break entry
             in Nil
-              pong io: io, slice: Bytes[QueueFlag::WAITING.value]
+              pong io: io, slice: Bytes[QueueFlag::WAITING]
             end
           end
         end
@@ -440,9 +448,11 @@ module SOCKS::Enhanced
       private def wait_{{name.id}}!(io : HTTP::WebSocket::Protocol)
         loop do
           {% if name == "readable" %}
-            break unless receive_buffer_end_of_reached?
+            break if @receiveMutex.synchronize { receiveBuffer.pos < receiveBuffer.size }
+            # break unless receive_buffer_end_of_reached?
           {% else %}
-            break unless sentSequence.get == maximum_sent_sequence
+            return unless allow_connection_pause?
+            break if sentSequence.get < maximum_sent_sequence
           {% end %}
 
           rb_flag = synchronize io: io, synchronize_flag: SynchronizeFlag::{{name.upcase.id}}, ignore_incoming_alert: true
@@ -451,7 +461,7 @@ module SOCKS::Enhanced
           in .ready?
             break
           in .busy?
-            sleep 0.001_f32.seconds
+            sleep 0.01_f32.seconds
           in .none?
           end
         end
@@ -469,7 +479,7 @@ module SOCKS::Enhanced
         begin
           loop do
             ready = synchronize_ready? synchronize_flag: synchronize_flag
-            return ready if ready
+            return ready if ready.is_a? RBFlag
             break unless synchronizing?
 
             return RBFlag::BUSY
@@ -492,7 +502,7 @@ module SOCKS::Enhanced
         @synchronizeMutex.synchronize do
           ready = synchronize_ready? synchronize_flag: synchronize_flag
 
-          if ready
+          if ready.is_a? RBFlag
             self.synchronizing = false
             return ready
           end
@@ -501,7 +511,7 @@ module SOCKS::Enhanced
           receive_buffer = uninitialized UInt8[4102_i32]
 
           loop do
-            receive = @receiveMutex.synchronize { io.receive receive_buffer.to_slice }
+            receive = @receiveMutex.synchronize { io.receive buffer: receive_buffer.to_slice }
 
             if synchronize_flag.resynchronize? && receive.opcode.binary?
               raise Exception.new "Enhanced::State::WebSocket.synchronize: synchronizeFlag is RESYNCHRONIZE, Binary Opcode is received! (Unexpected)."
@@ -510,18 +520,17 @@ module SOCKS::Enhanced
             case receive.opcode
             when .binary?
               break if synchronize_flag.negotiate?
-              memory_slice = IO::Memory.new receive_buffer.to_slice[0_i32, receive.size]
 
               if allow_connection_pause?
-                break unless state_flag = parse_state_flag? memory_slice: memory_slice
+                break unless state_flag = parse_state_flag? slice: receive_buffer.to_slice[0_u8, 1_u8]
                 break unless state_flag.sent?
 
-                receiveSequence.add 1_i8 if transporting?
-                peer_sent_sequence, size = parse_sent_frame memory_slice: memory_slice
+                receiveSequence.add value: 1_i8 if transporting?
+                peer_sent_sequence, size = parse_sent_frame slice: receive_buffer.to_slice[1_u8..5_u8]
                 receive_sequence = receiveSequence.get
 
                 if transporting? && (peer_sent_sequence != receive_sequence)
-                  receiveSequence.add -1_i8
+                  receiveSequence.add value: -1_i8
                   raise Exception.new "Enhanced::State::WebSocket.synchronize: peerSentSequence does not match receiveSequence!"
                 end
               end
@@ -534,37 +543,44 @@ module SOCKS::Enhanced
 
                 receive_buffer_pos = receiveBuffer.pos.dup
                 receiveBuffer.pos = receiveBuffer.size
-                IO.copy memory_slice, receiveBuffer
+
+                if allow_connection_pause?
+                  receiveBuffer.write slice: receive_buffer.to_slice[6_u8..(receive.size - 1)]
+                else
+                  receiveBuffer.write slice: receive_buffer.to_slice[0_u8, receive.size]
+                end
+
                 receiveBuffer.pos = receive_buffer_pos
               end
 
               process_receive_end_of_reached io: io if allow_connection_pause? && receive_end_of_reached?
             when .ping?
-              memory_slice = IO::Memory.new receive_buffer.to_slice[0_i32, receive.size]
-              state_flag = parse_state_flag? memory_slice: memory_slice
-              break pong io: io, slice: nil if state_flag.nil?
+              state_flag = parse_state_flag? slice: receive_buffer.to_slice[0_u8, 1_u8]
+              next if state_flag.nil? || receive.size.zero?
+              next pong io: io, slice: nil if state_flag.heartbeat?
 
               if synchronize_flag.resynchronize? && !state_flag.resynchronize?
                 raise Exception.new "Enhanced::State::WebSocket.synchronize: synchronizeFlag is RESYNCHRONIZE, but the received Ping StateFlag is not RESYNCHRONIZE."
               end
 
               case state_flag
+              in .heartbeat?
               in .sent?
                 raise Exception.new "Enhanced::State::WebSocket.synchronize: Ping StateFlag is SENT, Unexpected Error."
               in .received_confirmed?
-                sentRound.add 1_u64
+                sentRound.add value: 1_u64
                 @mutex.synchronize { sentBufferSet.clear }
                 sent_sequence_reset
               in .resynchronize?
-                peer_sent_sequence, peer_receive_sequence, peer_receive_round = parse_resynchronize_frame memory_slice: memory_slice
+                peer_sent_sequence, peer_receive_sequence, peer_receive_round = parse_resynchronize_frame slice: receive_buffer.to_slice[1_u8...]
                 received_confirmed = ((peer_receive_round - 1_u64) == sentRound.get) && (sentSequence.get == maximum_sent_sequence) && (peer_receive_sequence == -1_i8) rescue false
 
                 if received_confirmed
-                  sentRound.add 1_u64
+                  sentRound.add value: 1_u64
                   @mutex.synchronize { sentBufferSet.clear }
                   sent_sequence_reset
                 else
-                  raise Exception.new "Enhanced::State::WebSocket.synchronize: peerReceiveSequence does not match sentSequence!" if peer_receive_sequence > sentSequence.get
+                  raise Exception.new "Enhanced::State::WebSocket.synchronize: peerReceiveSequence does not match sentSequence!" if peer_receive_sequence > sentSequence.get && allow_connection_pause?
 
                   @mutex.synchronize do
                     sentBufferSet.each_with_index do |slice, index|
@@ -575,8 +591,8 @@ module SOCKS::Enhanced
                 end
               in .command?
                 break unless transporting?
-                break unless command_flag = parse_command_flag? memory_slice: memory_slice
-                break unless unix_ms = parse_unix_ms? memory_slice: memory_slice
+                break unless command_flag = parse_command_flag? slice: receive_buffer.to_slice[1_u8, 1_u8]
+                break unless unix_ms = parse_unix_ms? slice: receive_buffer.to_slice[2_u8...]
 
                 self.received_command = Tuple.new unix_ms, command_flag
                 process_response_pending_command_negotiate io: io if synchronize_flag.negotiate?
@@ -594,21 +610,22 @@ module SOCKS::Enhanced
                   raise Transfer::TerminateConnection.new "Enhanced::State::WebSocket.synchronize: Received Ping CommandFlag::CONNECTION_PAUSE from io."
                 end
               in .incoming?
-                pong io: io, slice: Bytes[StateFlag::INCOMING.value]
+                pong io: io, slice: Bytes[StateFlag::INCOMING]
                 raise State::IncomingAlert.new
               end
             when .pong?
-              memory_slice = IO::Memory.new receive_buffer.to_slice[0_i32, receive.size]
-              state_flag = parse_state_flag? memory_slice: memory_slice
-              break if state_flag.nil?
+              state_flag = parse_state_flag? slice: receive_buffer.to_slice[0_i32, 1_i32]
+              next if state_flag.nil? || receive.size.zero?
+              next if state_flag.heartbeat?
 
               case state_flag
+              in .heartbeat?
               in .sent?
               in .received_confirmed?
               in .resynchronize?
               in .command?
                 break unless transporting?
-                break unless command_flag = parse_command_flag? memory_slice: memory_slice
+                break unless command_flag = parse_command_flag? slice: receive_buffer.to_slice[1_i32..2_i32]
 
                 case command_flag
                 in .connection_reuse?
@@ -638,20 +655,17 @@ module SOCKS::Enhanced
       protected def synchronize_ready?(synchronize_flag : SynchronizeFlag) : RBFlag?
         case synchronize_flag
         in .readable?
-          return RBFlag::READY unless @receiveMutex.synchronize { receiveBuffer.pos == receiveBuffer.size }
+          return if @receiveMutex.synchronize { receiveBuffer.pos == receiveBuffer.size }
+
+          RBFlag::READY
         in .writeable?
-          return RBFlag::READY unless transporting?
-          return RBFlag::READY unless sentSequence.get == maximum_sent_sequence
+          return if (sentSequence.get == maximum_sent_sequence) && allow_connection_pause?
+          return if transporting?
+
+          RBFlag::READY
         in .resynchronize?
         in .negotiate?
         end
-      end
-
-      def update_receive_rescue_buffer(slice : Bytes) : Bool
-        @receiveMutex.synchronize { @receiveRescueBuffer.clear } if @receiveMutex.synchronize { @receiveRescueBuffer.pos == @receiveRescueBuffer.size }
-        @receiveMutex.synchronize { @receiveRescueBuffer.write slice }
-
-        true
       end
 
       def ping(io : HTTP::WebSocket::Protocol, slice : Bytes?)
@@ -665,13 +679,6 @@ module SOCKS::Enhanced
       def read(io : HTTP::WebSocket::Protocol, slice : Bytes) : Int32
         raise Transfer::TerminateConnection.new "Enhanced::State::WebSocket.read: TerminateConnection received!" if self.any_done?
         return 0_i32 if slice.empty?
-
-        if transporting? && receiveMutex.synchronize { @receiveRescueBuffer.pos != @receiveRescueBuffer.size }
-          length = @receiveMutex.synchronize { @receiveRescueBuffer.read slice }
-          @receiveMutex.synchronize { @receiveRescueBuffer.clear } if @receiveMutex.synchronize { @receiveRescueBuffer.pos == @receiveRescueBuffer.size }
-
-          return length
-        end
 
         loop do
           unless reading?
@@ -691,7 +698,7 @@ module SOCKS::Enhanced
           raise ex
         end
 
-        length = @receiveMutex.synchronize { receiveBuffer.read slice }
+        length = @receiveMutex.synchronize { receiveBuffer.read slice: slice }
         self.reading = false
         length
       end
@@ -716,7 +723,7 @@ module SOCKS::Enhanced
         end
 
         if transporting? && allow_connection_pause?
-          sentSequence.add 1_i8
+          sentSequence.add value: 1_i8
           sent_sequence = sentSequence.get
         else
           sent_sequence = -1_i8

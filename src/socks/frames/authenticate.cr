@@ -6,14 +6,12 @@ struct SOCKS::Frames
     property userName : String?
     property password : String?
     property permissionType : PermissionFlag?
-    property successed : Bool?
 
     def initialize(@version : VersionFlag, @arType : ARType)
       @authenticationChoiceType = nil
       @userName = nil
       @password = nil
       @permissionType = nil
-      @successed = nil
     end
 
     def self.from_io(io : IO, ar_type : ARType, version_flag : VersionFlag = VersionFlag::V5) : Authenticate
@@ -55,8 +53,6 @@ struct SOCKS::Frames
         raise Exception.new "Authenticate.read_ask: Invalid AuthenticationChoiceFlag, Authenticate.read_ask failed!"
       end
 
-      frame.successed = true
-
       frame
     end
 
@@ -89,8 +85,6 @@ struct SOCKS::Frames
       when .user_name_password?
         frame.permissionType = Frames.read_permission! io: io rescue Frames::PermissionFlag::Denied
       end
-
-      frame.successed = true
 
       frame
     end

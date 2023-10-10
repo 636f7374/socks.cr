@@ -16,5 +16,6 @@ module SOCKS::Enhanced
     RESYNCHRONIZE      = 2_u8
     COMMAND            = 3_u8
     INCOMING           = 4_u8
+    HEARTBEAT          = 5_u8
   end
 end
