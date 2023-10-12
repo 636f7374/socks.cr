@@ -11,7 +11,7 @@ def do_something(udp_from_establish_destination_ip_address : Socket::IPAddress, 
 
   # Send DNS Packet Query (EnhancedAssociateUDP).
 
-  dns_ask = DNS::Packet.create_getaddrinfo_ask protocol_type: DNS::ProtocolType::UDP, name: "www.twitter.com", record_type: DNS::Packet::RecordFlag::A
+  dns_ask = DNS::Packet.create_query_packet protocol_type: DNS::ProtocolType::UDP, name: "www.twitter.com", record_type: DNS::Packet::RecordFlag::A
   dns_ask.transmissionId = Random.new.rand type: UInt16
 
   # Create Frames::Fragment.

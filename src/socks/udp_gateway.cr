@@ -4,8 +4,20 @@ class SOCKS::UdpGateway
   def initialize(@listenAddress : Socket::IPAddress)
   end
 
+  # public_ip_address?(Socket::IPAddress.new(address: "::ffff:10.2.0.4", port: 50768_i32)) => true
+  # ::ffff:10.2.0.4 should be private.
+  # Note: Oct, 12, 2023 | Crystal bug (Crystal 1.10.0).
+
   def self.public_ip_address?(ip_address : Socket::IPAddress)
     (ip_address.link_local? || ip_address.loopback? || ip_address.private? || ip_address.unspecified?) ? false : true
+  end
+
+  def self.strip_ffff_ip_address(ip_address : Socket::IPAddress) : Socket::IPAddress
+    ip_address_text = ip_address.address
+    return ip_address unless ip_address_text.starts_with? str: "::ffff:"
+
+    strip_ip_address_text = ip_address_text.lstrip chars: "::ffff:"
+    Socket::IPAddress.new address: strip_ip_address_text, port: ip_address.port
   end
 
   def listen
@@ -40,18 +52,25 @@ class SOCKS::UdpGateway
       # Block if destination_address equal incoming_address, listenAddress and Block if destination_address and incoming_address are External IpAddress.
       # Block if destination_address is local IpAddress and destination_address port is equal to listenAddress port (Prevent reflection attacks (-> UdpGateway -> UdpGateway ->)).
 
-      next if (destination_address == incoming_address) || (destination_address == listenAddress)
-      incoming_address_is_public_ip = UdpGateway.public_ip_address? ip_address: incoming_address
-      destination_address_is_public_ip = UdpGateway.public_ip_address? ip_address: destination_address
+      strip_incoming_address = UdpGateway.strip_ffff_ip_address ip_address: incoming_address
+      strip_destination_address = UdpGateway.strip_ffff_ip_address ip_address: destination_address
+
+      next if (strip_destination_address == strip_incoming_address) || (strip_destination_address == listenAddress)
+      incoming_address_is_public_ip = UdpGateway.public_ip_address? ip_address: strip_incoming_address
+      destination_address_is_public_ip = UdpGateway.public_ip_address? ip_address: strip_destination_address
       next if incoming_address_is_public_ip && destination_address_is_public_ip
-      next if !destination_address_is_public_ip && (destination_address.port == listenAddress.port)
+      next if !destination_address_is_public_ip && (strip_destination_address.port == listenAddress.port)
 
       # Prevent reflection attacks (... -> UdpGateway -> Endpoint -> UdpGateway -> Endpoint -> ...).
       # ...
 
       if __ip46_flag = Frames::Ip46Flag.from_value? value: buffer.to_slice[7_u8]
         __destination_address = Socket::IPAddress.parse slice: buffer.to_slice[8_u8..(ip46_flag.ipv4? ? 13_u8 : 25_u8)], family: (ip46_flag.ipv4? ? Socket::Family::INET : Socket::Family::INET6), with_port: true rescue nil
-        next if !UdpGateway.public_ip_address?(ip_address: __destination_address) && __destination_address.port == listenAddress.port if __destination_address
+
+        if __destination_address
+          __destination_address = UdpGateway.strip_ffff_ip_address ip_address: __destination_address
+          next if !UdpGateway.public_ip_address?(ip_address: __destination_address) && __destination_address.port == listenAddress.port
+        end
       end
 
       # Stripping "::ffff:" prefix from request.connection.remoteAddress nodejs: https://stackoverflow.com/questions/31100703/stripping-ffff-prefix-from-request-connection-remoteaddress-nodejs
