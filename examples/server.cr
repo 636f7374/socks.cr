@@ -34,12 +34,12 @@ pause_pool = SOCKS::PausePool.new clearInterval: options.server.pausePool.clearI
 # Set Client, Outbound Timeout.
 
 client_timeout = SOCKS::TimeOut.new
-client_timeout.read = 15_i32
-client_timeout.write = 15_i32
+client_timeout.read = 15_i32.seconds
+client_timeout.write = 15_i32.seconds
 
 outbound_timeout = SOCKS::TimeOut.new
-outbound_timeout.read = 15_i32
-outbound_timeout.write = 15_i32
+outbound_timeout.read = 15_i32.seconds
+outbound_timeout.write = 15_i32.seconds
 
 server.client_timeout = client_timeout
 server.outbound_timeout = outbound_timeout
@@ -80,10 +80,13 @@ spawn do
 end
 
 loop do
-  session = server.accept? rescue nil
-  next unless session
+  _socket = server.underly_accept? rescue nil
+  next unless socket = _socket
 
   spawn do
+    _session = server.accept socket: socket
+    next unless session = _session
+
     begin
       session.process_upgrade! server: server, pause_pool: pause_pool
       server.handshake! session: session

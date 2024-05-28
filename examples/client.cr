@@ -151,7 +151,7 @@ begin
   {"twitter.com", "example.com", "google.com"}.each_with_index do |domain, index|
     # Create DNS Packet Query (AssociateUDP).
 
-    dns_ask = DNS::Packet.create_getaddrinfo_ask protocol_type: DNS::ProtocolType::UDP, name: domain, record_type: DNS::Packet::RecordFlag::A
+    dns_ask = DNS::Packet.create_query_packet protocol_type: DNS::ProtocolType::UDP, name: domain, record_type: DNS::Packet::RecordFlag::A
     dns_ask.transmissionId = Random.new.rand type: UInt16
 
     # Send DNS Packet Query (AssociateUDP) & Receive 4096 Bytes, because Fragment and DNS query may be larger than 512 Bytes. (AssociateUDP).
