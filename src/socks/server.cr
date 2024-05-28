@@ -370,7 +370,7 @@ class SOCKS::Server
     true
   end
 
-  def accept? : Session?
+  def underly_accept? : IO?
     return unless socket = io.accept?
     socket.sync = true if socket.responds_to? :sync=
 
@@ -379,11 +379,15 @@ class SOCKS::Server
       socket.write_timeout = _timeout.write if socket.responds_to? :write_timeout=
     end
 
+    socket
+  end
+
+  def accept(socket : IO) : Session
     if socket.is_a? OpenSSL::SSL::Socket::Server
       begin
         socket.accept
       rescue ex
-        return
+        raise ex
       end
     end
 

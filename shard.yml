@@ -1,10 +1,10 @@
 name: socks
-version: 1.0.1
+version: 1.0.2
 
 dependencies:
   dns:
     github: 636f7374/dns.cr
-    version: ~> 1.0.4
+    version: ~> 1.0.5
   interface_address:
     github: 64726f70/interface_address
     version: ~> 1.0.0
